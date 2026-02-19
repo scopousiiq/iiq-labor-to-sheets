@@ -264,7 +264,7 @@ function setupByTeamSheet(ss) {
     'cost,BYROW(teams,LAMBDA(t,SUMIFS(ActivityLog!H:H,ActivityLog!R:R,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'entries,BYROW(teams,LAMBDA(t,COUNTIFS(ActivityLog!R:R,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'tickets,BYROW(teams,LAMBDA(t,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!R2:R=t,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
-    'avg,IF(tickets>0,hours/tickets,0),' +
+    'avg,MAP(hours,tickets,LAMBDA(h,t,IF(t>0,h/t,0))),' +
     'SORT(IFERROR(HSTACK(teams,hours,cost,entries,tickets,avg),0),2,FALSE)' +
     ')';
 
@@ -288,7 +288,7 @@ function setupByIndividualSheet(ss) {
     'cost,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!H:H,ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'entries,BYROW(users,LAMBDA(u,COUNTIFS(ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'tickets,BYROW(users,LAMBDA(u,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!N2:N=u,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
-    'avg,IF(tickets>0,hours/tickets,0),' +
+    'avg,MAP(hours,tickets,LAMBDA(h,t,IF(t>0,h/t,0))),' +
     'SORT(IFERROR(HSTACK(users,teams,hours,cost,entries,tickets,avg),0),3,FALSE)' +
     ')';
 
@@ -311,7 +311,7 @@ function setupByDepartmentSheet(ss) {
     'cost,BYROW(locs,LAMBDA(l,SUMIFS(ActivityLog!H:H,ActivityLog!T:T,l,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'entries,BYROW(locs,LAMBDA(l,COUNTIFS(ActivityLog!T:T,l,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'tickets,BYROW(locs,LAMBDA(l,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!T2:T=l,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
-    'avg,IF(tickets>0,hours/tickets,0),' +
+    'avg,MAP(hours,tickets,LAMBDA(h,t,IF(t>0,h/t,0))),' +
     'SORT(IFERROR(HSTACK(locs,hours,cost,entries,tickets,avg),0),2,FALSE)' +
     ')';
 
@@ -334,7 +334,7 @@ function setupByLaborTypeSheet(ss) {
     'cost,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!H:H,ActivityLog!J:J,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'entries,BYROW(types,LAMBDA(t,COUNTIFS(ActivityLog!J:J,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'tickets,BYROW(types,LAMBDA(t,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!J2:J=t,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
-    'avg,IF(tickets>0,hours/tickets,0),' +
+    'avg,MAP(hours,tickets,LAMBDA(h,t,IF(t>0,h/t,0))),' +
     'SORT(IFERROR(HSTACK(types,hours,cost,entries,tickets,avg),0),2,FALSE)' +
     ')';
 
@@ -357,7 +357,7 @@ function setupByResolutionSheet(ss) {
     'cost,BYROW(actions,LAMBDA(a,SUMIFS(ActivityLog!H:H,ActivityLog!L:L,a,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'entries,BYROW(actions,LAMBDA(a,COUNTIFS(ActivityLog!L:L,a,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'tickets,BYROW(actions,LAMBDA(a,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!L2:L=a,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
-    'avg,IF(tickets>0,hours/tickets,0),' +
+    'avg,MAP(hours,tickets,LAMBDA(h,t,IF(t>0,h/t,0))),' +
     'SORT(IFERROR(HSTACK(actions,hours,cost,entries,tickets,avg),0),2,FALSE)' +
     ')';
 
