@@ -64,6 +64,7 @@ function setupLaborTrackerDashboard() {
   if (setupLogsSheet(ss)) created.push('Logs'); else skipped.push('Logs');
   if (setupActivityFailuresSheet(ss)) created.push('ActivityFailures'); else skipped.push('ActivityFailures');
   ensureDataSheetsProtected();
+  reorderSheets(ss);
 
   const message = [];
   if (created.length > 0) message.push('Created: ' + created.join(', '));
@@ -76,34 +77,227 @@ function setupLaborTrackerDashboard() {
   ui.alert('Setup Complete', message.join('\n'), ui.ButtonSet.OK);
 }
 
+// Desired tab order — matches the Sheet Reference section in Instructions.
+// Hidden/internal sheets go at the end.
+var SHEET_ORDER = [
+  'Instructions', 'Config', 'DateFilters',
+  'RawData', 'ActivityLog',
+  'Teams', 'Users', 'LaborTypes', 'ResolutionActions',
+  'ByTeam', 'ByIndividual', 'ByDepartment', 'ByLaborType', 'ByResolution',
+  'YearSummary', 'Dashboard', 'Logs',
+  // Hidden / internal (end of tab bar)
+  'TicketIndex', 'ActivityIndex', 'ActivityFailures'
+];
+
+function reorderSheets(ss) {
+  var position = 1;
+  SHEET_ORDER.forEach(function(name) {
+    var sheet = ss.getSheetByName(name);
+    if (sheet) {
+      sheet.activate();
+      ss.moveActiveSheet(position);
+      position++;
+    }
+  });
+  // Any sheets not in the list (e.g. user-created) stay after the ordered ones
+}
+
 function setupInstructionsSheet(ss) {
   if (ss.getSheetByName('Instructions')) return false;
 
   const sheet = ss.insertSheet('Instructions');
-  sheet.setColumnWidth(1, 800);
+  sheet.setColumnWidth(1, 700);
+  sheet.setColumnWidth(2, 500);
 
-  const content = [
-    ['iiQ LABOR TRACKER - SETUP AND USAGE'],
-    [''],
-    ['This spreadsheet pulls labor time from Incident IQ into Google Sheets.'],
-    ['Use the iiQ Data menu to set up, load data, and configure automation.'],
-    [''],
-    ['Quick Start'],
-    ['1. Run iiQ Data > Setup > Run Complete Setup'],
-    ['2. Fill in Config sheet (API_BASE_URL, BEARER_TOKEN, SITE_ID)'],
-    ['3. Run iiQ Data > Setup > Test API Connection'],
-    ['4. Run iiQ Data > Load Data > Start Initial Load'],
-    ['5. (Optional) Enable automation for daily refresh'],
-    [''],
-    ['Notes'],
-    ['- Data is limited to the configured school year'],
-    ['- School year dates lock after data loading begins'],
-    ['- ActivityLog drives rollups and the YearSummary output'],
-    ['- For historical years, make a copy and adjust school year dates']
-  ];
+  // --- Section builders ---
+  var row = 1;
 
-  sheet.getRange(1, 1, content.length, 1).setValues(content);
-  sheet.getRange(1, 1, 1, 1).setFontWeight('bold');
+  function writeHeader(text) {
+    sheet.getRange(row, 1).setValue(text).setFontWeight('bold').setFontSize(14);
+    row++;
+  }
+
+  function writeSectionHeader(text) {
+    sheet.getRange(row, 1).setValue(text).setFontWeight('bold').setFontSize(11);
+    row++;
+  }
+
+  function writeLine(text) {
+    sheet.getRange(row, 1).setValue(text);
+    row++;
+  }
+
+  function writePair(col1, col2) {
+    sheet.getRange(row, 1).setValue(col1);
+    sheet.getRange(row, 2).setValue(col2);
+    row++;
+  }
+
+  function writePairBold(col1, col2) {
+    sheet.getRange(row, 1).setValue(col1).setFontWeight('bold');
+    sheet.getRange(row, 2).setValue(col2);
+    row++;
+  }
+
+  function blankRow() { row++; }
+
+  // ===== TITLE =====
+  writeHeader('iiQ LABOR TRACKER');
+  writeLine('This spreadsheet pulls labor hours and resolution action data from IncidentIQ into');
+  writeLine('Google Sheets, providing rollup reports by team, individual, department, and labor type.');
+  writeLine('All analytics update automatically via formulas — no manual calculation needed.');
+  blankRow();
+
+  // ===== QUICK START =====
+  writeSectionHeader('QUICK START');
+  writeLine('1. Run  iiQ Data > Setup > Run Complete Setup');
+  writeLine('2. Go to the Config sheet and fill in:');
+  writeLine('     API_BASE_URL  —  your district\'s IncidentIQ URL (e.g. https://district.incidentiq.com)');
+  writeLine('     BEARER_TOKEN  —  your API bearer token (JWT)');
+  writeLine('     SITE_ID  —  your site UUID');
+  writeLine('     SCHOOL_YEAR_START / SCHOOL_YEAR_END  —  the date range for data');
+  writeLine('3. Run  iiQ Data > Setup > Test API Connection  to verify credentials');
+  writeLine('4. Run  iiQ Data > Load Data > Start Initial Load  to begin pulling data');
+  writeLine('5. Wait for loading to complete (large datasets load in batches across multiple runs)');
+  writeLine('6. (Optional) Run  iiQ Data > Setup > Setup Automated Triggers  for daily refresh');
+  blankRow();
+
+  // ===== HOW DATA LOADING WORKS =====
+  writeSectionHeader('HOW DATA LOADING WORKS');
+  writeLine('Data loads in three sequential phases:');
+  writeLine('  Phase 1:  Reference data (Teams, Users, Resolution Actions)');
+  writeLine('  Phase 2:  Ticket data (paginated, fetches all tickets in the school year)');
+  writeLine('  Phase 3:  Activity log (fetches time entries for each ticket)');
+  blankRow();
+  writeLine('Google Apps Script has a 6-minute execution limit. Large loads automatically pause');
+  writeLine('and resume. You can resume manually (iiQ Data > Load Data > Continue Loading) or');
+  writeLine('let the automated monitor trigger pick it up every 10 minutes.');
+  blankRow();
+  writeLine('Progress is tracked in the Config sheet (TICKET_LOAD_PAGE, ACTIVITY_TICKET_INDEX, etc.).');
+  writeLine('Use  iiQ Data > Check Status  to see current progress at any time.');
+  blankRow();
+
+  // ===== SHEET REFERENCE =====
+  writeSectionHeader('SHEET REFERENCE');
+  blankRow();
+  writePairBold('Sheet', 'Description');
+  writePair('Instructions', 'This sheet — setup guide and reference');
+  writePair('Config', 'All settings, credentials, and load state (key-value pairs)');
+  writePair('DateFilters', 'Date range selector for analytics (MTD, QTD, YTD, School YTD, etc.)');
+  writePair('RawData', 'All tickets with labor fields (' + RAWDATA_HEADERS.length + ' columns)');
+  writePair('ActivityLog', 'All resolution action time entries (' + ACTIVITY_HEADERS.length + ' columns) — primary source for rollups');
+  writePair('Teams', 'Reference: team names and IDs');
+  writePair('Users', 'Reference: user names, emails, team assignments');
+  writePair('LaborTypes', 'Reference: labor type names and IDs');
+  writePair('ResolutionActions', 'Reference: resolution action names, categories, scopes');
+  writePair('ByTeam', 'Rollup: hours, cost, entry count, ticket count per team');
+  writePair('ByIndividual', 'Rollup: hours, cost, entry count per individual (with team)');
+  writePair('ByDepartment', 'Rollup: hours, cost, entry count per location/department');
+  writePair('ByLaborType', 'Rollup: hours, cost, entry count per labor type');
+  writePair('ByResolution', 'Rollup: hours, cost, entry count per resolution action');
+  writePair('YearSummary', 'Monthly aggregation by team, agent, labor type, and resolution');
+  writePair('Dashboard', 'KPI summary referencing the rollup sheets');
+  writePair('Logs', 'Operation log (newest first, auto-trimmed to 1000 rows)');
+  blankRow();
+
+  // ===== DATE FILTERS =====
+  writeSectionHeader('USING DATE FILTERS');
+  writeLine('All rollup sheets (ByTeam, ByIndividual, etc.) filter data by the DateFilters sheet.');
+  writeLine('Change the Filter Mode dropdown in DateFilters!B2 to adjust the date range:');
+  blankRow();
+  writePairBold('Filter Mode', 'Date Range');
+  writePair('School YTD', 'School year start through today (default)');
+  writePair('MTD', 'First of current month through today');
+  writePair('QTD', 'First of current quarter through today');
+  writePair('YTD', 'January 1 through today');
+  writePair('Last 7 Days', 'Past 7 days');
+  writePair('Last 30 Days', 'Past 30 days');
+  writePair('Manual', 'Custom start/end dates (fill in rows 3 and 4)');
+  blankRow();
+  writeLine('Rollup formulas recalculate automatically when you change the filter mode.');
+  blankRow();
+
+  // ===== MENU REFERENCE =====
+  writeSectionHeader('MENU REFERENCE  (iiQ Data)');
+  blankRow();
+  writePairBold('Menu Item', 'What It Does');
+  writePair('Check Status', 'Shows current load progress and data counts');
+  writePair('View Dashboard', 'Navigates to the Dashboard sheet');
+  blankRow();
+  writeLine('  Setup submenu:');
+  writePair('  Run Complete Setup', 'Creates all sheets, headers, formulas, and protections');
+  writePair('  Regenerate Analytics Sheets', 'Rebuilds all formula-based sheets (ByTeam, etc.) from scratch');
+  writePair('  Test API Connection', 'Verifies API credentials work');
+  writePair('  Verify Configuration', 'Checks all required Config settings are filled in');
+  writePair('  Setup Automated Triggers', 'Installs monitor (10 min) and daily refresh (2 AM) triggers');
+  writePair('  Remove Automated Triggers', 'Removes all time-based triggers');
+  writePair('  View Trigger Status', 'Shows which triggers are currently installed');
+  blankRow();
+  writeLine('  Load Data submenu:');
+  writePair('  Start Initial Load', 'Begins loading all data for the configured school year');
+  writePair('  Continue Loading', 'Resumes a paused load from where it left off');
+  writePair('  Refresh Reference Data', 'Reloads Teams, Users, and Resolution Actions');
+  writePair('  Open Ticket Refresh', 'Updates open tickets and recently closed tickets');
+  blankRow();
+  writeLine('  Troubleshooting submenu:');
+  writePair('  View Logs', 'Navigates to the Logs sheet');
+  writePair('  Reset Load States', 'Resets all load progress (does not delete data)');
+  writePair('  Full Reload (Clear Data)', 'Deletes all data and unlocks school year — requires triggers removed first');
+  blankRow();
+
+  // ===== AUTOMATION =====
+  writeSectionHeader('AUTOMATION');
+  writeLine('Two automated triggers are available (install via iiQ Data > Setup > Setup Automated Triggers):');
+  blankRow();
+  writePairBold('Trigger', 'Schedule & Purpose');
+  writePair('Data Load Monitor', 'Every 10 minutes — resumes any paused loads automatically');
+  writePair('Daily Open Refresh', 'Daily at 2 AM — refreshes open and recently closed tickets');
+  blankRow();
+  writeLine('Triggers skip gracefully if another operation is already running (no conflicts).');
+  writeLine('The daily refresh only runs after the initial load is complete.');
+  blankRow();
+
+  // ===== SCHOOL YEAR & DATA SCOPE =====
+  writeSectionHeader('SCHOOL YEAR & DATA SCOPE');
+  writeLine('Each spreadsheet holds one school year of data. The date range is set in Config:');
+  writeLine('  SCHOOL_YEAR_START  and  SCHOOL_YEAR_END');
+  blankRow();
+  writeLine('Once data loading begins, the school year dates are LOCKED to prevent accidental changes.');
+  writeLine('To load a different school year:');
+  writeLine('  1. Remove triggers  (iiQ Data > Setup > Remove Automated Triggers)');
+  writeLine('  2. Full Reload  (iiQ Data > Troubleshooting > Full Reload) — this clears all data and unlocks dates');
+  writeLine('  3. Update SCHOOL_YEAR_START and SCHOOL_YEAR_END in Config');
+  writeLine('  4. Start Initial Load');
+  blankRow();
+  writeLine('For multiple school years, make a copy of the spreadsheet and configure each with different dates.');
+  blankRow();
+
+  // ===== TROUBLESHOOTING =====
+  writeSectionHeader('TROUBLESHOOTING');
+  blankRow();
+  writePairBold('Problem', 'Solution');
+  writePair('Load seems stuck', 'Check Status. If paused, run Continue Loading or wait for the monitor trigger.');
+  writePair('API connection fails', 'Verify API_BASE_URL (no /api suffix), BEARER_TOKEN, and SITE_ID in Config.');
+  writePair('"Another operation is running"', 'Wait a few minutes. Locks auto-expire after 6 minutes.');
+  writePair('Analytics show wrong data', 'Check DateFilters date range. Run Regenerate Analytics Sheets.');
+  writePair('Need to change school year', 'Remove triggers first, then Full Reload to unlock and clear data.');
+  writePair('Rollup sheets are empty', 'ActivityLog must have data. Ensure all 3 load phases completed.');
+  writePair('Duplicate or stale data', 'Data uses upsert (update-or-insert). Run Open Ticket Refresh for latest.');
+  writePair('Activity failures', 'Check the ActivityFailures sheet. Failed tickets retry on next load.');
+  blankRow();
+
+  // ===== TIPS =====
+  writeSectionHeader('TIPS');
+  writeLine('- The Logs sheet records every operation — check it first when debugging.');
+  writeLine('- Config values are all strings. Don\'t change auto-managed keys manually.');
+  writeLine('- Rollup sheets are formula-driven and update instantly when ActivityLog data changes.');
+  writeLine('- Hidden sheets (TicketIndex, ActivityIndex, ActivityFailures) support fast lookups — don\'t modify.');
+  writeLine('- THROTTLE_MS (default 1000) controls delay between API calls. Lower = faster but may hit rate limits.');
+  writeLine('- PAGE_SIZE (default 2000) controls records per API call. Larger = fewer calls but more memory.');
+
+  // Freeze row 1 for the title
+  sheet.setFrozenRows(1);
+
   return true;
 }
 
@@ -473,6 +667,7 @@ function regenerateAnalyticsSheets() {
   setupByResolutionSheet(ss);
   setupDashboardSheet(ss);
   setupYearSummarySheet(ss);
+  reorderSheets(ss);
   logOperation('SETUP', 'SUCCESS', 'Regenerated all analytics sheets');
 }
 
