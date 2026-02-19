@@ -1,0 +1,120 @@
+/**
+ * ApiClient.gs - HTTP client with retry/backoff for iiQ Labor Tracker
+ */
+
+const MAX_RETRIES = 5;
+const BASE_BACKOFF_MS = 1000;
+
+function apiRequest(method, endpoint, payload, retryCount) {
+  retryCount = retryCount || 0;
+
+  const validation = validateConfig();
+  if (!validation.isValid) {
+    throw new Error('API configuration missing: ' + validation.missing.join(', '));
+  }
+
+  const url = getApiUrl(endpoint);
+  const headers = getApiHeaders();
+  const throttleMs = getThrottleMs();
+
+  const options = {
+    method: method.toLowerCase(),
+    headers: headers,
+    muteHttpExceptions: true
+  };
+
+  if (payload && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
+    options.payload = JSON.stringify(payload);
+  }
+
+  try {
+    if (throttleMs > 0) {
+      Utilities.sleep(throttleMs);
+    }
+
+    const response = UrlFetchApp.fetch(url, options);
+    const code = response.getResponseCode();
+    const body = response.getContentText();
+
+    if (code >= 200 && code < 300) {
+      logOperation('API_REQUEST', 'SUCCESS', method + ' ' + endpoint + ' -> ' + code);
+      if (body && body.trim()) {
+        return JSON.parse(body);
+      }
+      return null;
+    }
+
+    if ((code === 429 || code >= 500) && retryCount < MAX_RETRIES) {
+      const backoffMs = BASE_BACKOFF_MS * Math.pow(2, retryCount) + Math.floor(Math.random() * 250);
+      logOperation('API_REQUEST', 'RETRY',
+        method + ' ' + endpoint + ' -> ' + code + ' retry in ' + backoffMs + 'ms');
+      Utilities.sleep(backoffMs);
+      return apiRequest(method, endpoint, payload, retryCount + 1);
+    }
+
+    logOperation('API_REQUEST', 'ERROR', method + ' ' + endpoint + ' -> ' + code + ': ' + body);
+    throw new Error('API request failed (' + code + '): ' + body);
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    if (retryCount < MAX_RETRIES && message.indexOf('fetch') !== -1) {
+      const backoffMs = BASE_BACKOFF_MS * Math.pow(2, retryCount) + Math.floor(Math.random() * 250);
+      logOperation('API_REQUEST', 'NETWORK_RETRY',
+        method + ' ' + endpoint + ' -> ' + message + ' retry in ' + backoffMs + 'ms');
+      Utilities.sleep(backoffMs);
+      return apiRequest(method, endpoint, payload, retryCount + 1);
+    }
+
+    logOperation('API_REQUEST', 'ERROR', method + ' ' + endpoint + ': ' + message);
+    throw error;
+  }
+}
+
+function fetchAllPagesWithQueryParams(endpoint, payload, method) {
+  const pageSize = getPageSize();
+  const results = [];
+  let pageIndex = 0;
+  let hasMore = true;
+  const httpMethod = method || 'POST';
+
+  while (hasMore) {
+    const separator = endpoint.includes('?') ? '&' : '?';
+    const pagedEndpoint = endpoint + separator + '$p=' + pageIndex + '&$s=' + pageSize;
+    const response = apiRequest(httpMethod, pagedEndpoint, payload || null);
+    const items = response && response.Items ? response.Items : (Array.isArray(response) ? response : []);
+
+    if (items.length > 0) {
+      results.push.apply(results, items);
+      pageIndex++;
+
+      if (response && response.Paging && typeof response.Paging.TotalRows === 'number') {
+        hasMore = results.length < response.Paging.TotalRows;
+      } else {
+        hasMore = items.length >= pageSize;
+      }
+    } else {
+      hasMore = false;
+    }
+  }
+
+  return results;
+}
+
+function testApiConnection() {
+  try {
+    const response = apiRequest('GET', '/v1.0/teams', null);
+    return !!response;
+  } catch (error) {
+    logOperation('API_TEST', 'ERROR', error.message);
+    return false;
+  }
+}
+
+function showApiTestResult() {
+  const ui = SpreadsheetApp.getUi();
+  const ok = testApiConnection();
+  if (ok) {
+    ui.alert('API Test Successful', 'Connected to Incident IQ API.', ui.ButtonSet.OK);
+  } else {
+    ui.alert('API Test Failed', 'Unable to connect. Check Config sheet and Logs.', ui.ButtonSet.OK);
+  }
+}
