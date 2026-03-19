@@ -112,22 +112,10 @@ All analytics sheets filter by the `DateFilters` sheet. Change the dropdown to s
 
 - [**CLAUDE.md**](CLAUDE.md) — Technical reference for developers (architecture, column layouts, formula patterns)
 
-## Deployment with clasp
+## Disclaimer
 
-If you prefer using [clasp](https://github.com/nickcbrunets/clasp) for deployment:
-
-1. Install clasp: `npm install -g @nickcbrunets/clasp`
-2. Create a `.clasp.json` in the project root:
-   ```json
-   {
-     "scriptId": "your-apps-script-id",
-     "rootDir": "scripts"
-   }
-   ```
-3. Run `clasp push` to deploy
-
-> `.clasp.json` is gitignored — each user must create their own with their script ID.
+This is an independent utility, not a supported product feature. No SLA or maintenance commitment is implied. Use as-is and customize to fit your district's needs.
 
 ## License
 
-MIT — Free to use and modify for your district.
+MIT — Free to use and modify for your district. See [LICENSE](LICENSE).

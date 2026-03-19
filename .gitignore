@@ -1,6 +1,3 @@
-# clasp config (contains real scriptId)
-.clasp.json
-
 # Claude Code / MCP local config
 .claude/
 .mcp.json
