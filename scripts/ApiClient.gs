@@ -32,12 +32,14 @@ function apiRequest(method, endpoint, payload, retryCount) {
       Utilities.sleep(throttleMs);
     }
 
+    const fetchStart = Date.now();
     const response = UrlFetchApp.fetch(url, options);
+    const fetchMs = Date.now() - fetchStart;
     const code = response.getResponseCode();
     const body = response.getContentText();
 
     if (code >= 200 && code < 300) {
-      logOperation('API_REQUEST', 'SUCCESS', method + ' ' + endpoint + ' -> ' + code);
+      logOperation('API_REQUEST', 'SUCCESS', method + ' ' + endpoint + ' -> ' + code + ' (' + fetchMs + 'ms)');
       if (body && body.trim()) {
         return JSON.parse(body);
       }
@@ -47,12 +49,12 @@ function apiRequest(method, endpoint, payload, retryCount) {
     if ((code === 429 || code >= 500) && retryCount < MAX_RETRIES) {
       const backoffMs = BASE_BACKOFF_MS * Math.pow(2, retryCount) + Math.floor(Math.random() * 250);
       logOperation('API_REQUEST', 'RETRY',
-        method + ' ' + endpoint + ' -> ' + code + ' retry in ' + backoffMs + 'ms');
+        method + ' ' + endpoint + ' -> ' + code + ' (' + fetchMs + 'ms) retry in ' + backoffMs + 'ms');
       Utilities.sleep(backoffMs);
       return apiRequest(method, endpoint, payload, retryCount + 1);
     }
 
-    logOperation('API_REQUEST', 'ERROR', method + ' ' + endpoint + ' -> ' + code + ': ' + body);
+    logOperation('API_REQUEST', 'ERROR', method + ' ' + endpoint + ' -> ' + code + ' (' + fetchMs + 'ms): ' + body);
     throw new Error('API request failed (' + code + '): ' + body);
   } catch (error) {
     const message = error && error.message ? error.message : String(error);

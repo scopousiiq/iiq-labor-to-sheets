@@ -5,6 +5,7 @@
 const DATA_LOAD_TYPES = {
   TEAMS: 'TEAMS',
   USERS: 'USERS',
+  LABOR_TYPES: 'LABOR_TYPES',
   RESOLUTION_ACTIONS: 'RESOLUTION_ACTIONS',
   TICKETS: 'TICKETS',
   ACTIVITIES: 'ACTIVITIES',
@@ -12,7 +13,7 @@ const DATA_LOAD_TYPES = {
 };
 
 const LOAD_GROUPS = {
-  1: [DATA_LOAD_TYPES.TEAMS, DATA_LOAD_TYPES.USERS, DATA_LOAD_TYPES.RESOLUTION_ACTIONS],
+  1: [DATA_LOAD_TYPES.TEAMS, DATA_LOAD_TYPES.USERS, DATA_LOAD_TYPES.LABOR_TYPES, DATA_LOAD_TYPES.RESOLUTION_ACTIONS],
   2: [DATA_LOAD_TYPES.TICKETS],
   3: [DATA_LOAD_TYPES.ACTIVITIES]
 };
@@ -136,6 +137,11 @@ function executeNextLoadInternal_() {
         break;
       case DATA_LOAD_TYPES.USERS:
         loadUsers();
+        break;
+      case DATA_LOAD_TYPES.LABOR_TYPES:
+        setLoadState(nextLoad, LOAD_STATES.IN_PROGRESS);
+        loadLaborTypes();
+        setLoadState(nextLoad, LOAD_STATES.COMPLETE);
         break;
       case DATA_LOAD_TYPES.RESOLUTION_ACTIONS:
         loadResolutionActions();

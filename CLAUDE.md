@@ -36,16 +36,20 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 1. **Load groups execute sequentially:** Group 1 (Teams, Users, ResolutionActions) → Group 2 (Tickets) → Group 3 (Activities)
 2. **Resumable pagination:** Long loads pause at `MAX_RUNTIME_MS` (5.5 min) and resume via `triggerDataLoadMonitor` trigger or manual "Continue Loading"
 3. **Upsert pattern:** Index sheets map entity IDs to row numbers. New records append; existing records update in-place via `writeBatchedUpdates()`
-4. **School year locking:** Once data loading begins, `SCHOOL_YEAR_START`/`SCHOOL_YEAR_END`/`PAGE_SIZE` are locked in Config and cell-protected. A full reload is required to change them.
+4. **School year locking:** Once data loading begins, `SCHOOL_YEAR_START`/`SCHOOL_YEAR_END`/`PAGE_SIZE`/`MODULE` are locked in Config and cell-protected. A full reload is required to change them.
 
 ### Google Sheets Structure
 
 - **Config** — key-value settings (API_BASE_URL, BEARER_TOKEN, SITE_ID, school year dates, load state tracking)
-- **DateFilters** — SWITCH-based formulas for date range selection (MTD, QTD, YTD, School YTD, etc.)
+- **DateFilters** — SWITCH-based formulas for date range selection (This/Last Month, This/Last Week, This/Last Quarter, This/Last Calendar Year, This/Last School Year, Manual)
 - **RawData** (21 cols) — ticket data with labor fields
 - **ActivityLog** (20 cols) — resolution action time entries with denormalized team/location
-- **Teams, Users, LaborTypes, ResolutionActions** — reference lookup tables
+- **Teams, Users, ResolutionActions** — reference lookup tables
+- **LaborTypes** (4 cols: LaborTypeId, LaborTypeName, IsOvertime, OTMultiplier) — loaded from `GET /v1.0/labor/types` API; `IsOvertime` flag drives automatic overtime detection in IndividualLookup
 - **ByTeam, ByIndividual, ByDepartment, ByLaborType, ByResolution** — formula-driven rollup sheets using LET/BYROW/SUMIFS against ActivityLog, filtered by DateFilters
+- **IndividualLookup** — dropdown to select an individual; shows their activity detail and per-ticket summary for the filtered date range
+- **AgentPivot** (7 cols: Agent, Team, Standard, Travel, Overtime, Weekend, Total Hours) — per-agent pivot with hours by labor type; column headers reference cell values so labor type names are adjustable
+- **ZeroLabor** (8 cols) — closed tickets with zero labor hours in the filtered date range; flags tickets where no time was logged
 - **YearSummary** — QUERY-based monthly aggregation by group type (Team, Agent, LaborType, Resolution)
 - **Dashboard** — KPI formulas referencing rollup sheets
 - **TicketIndex, ActivityIndex** — hidden index sheets for fast lookups
@@ -54,7 +58,7 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 
 ### IncidentIQ API
 
-- Auth: Bearer token + SiteId header + `Client: ApiClient`
+- Auth: Bearer token + SiteId header + ProductId header + `Client: ApiClient`
 - Base URL is stored without `/api` suffix; `Config.gs:normalizeBaseUrl()` appends it
 - Pagination: `$p` (zero-based page), `$s` (page size, default 2000)
 - Ticket search: `POST /v1.0/tickets` with filter facets (`totallabortime`, `createddate`, `isclosed`, `closeddate`, `modifieddate`)
@@ -138,6 +142,7 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 | `SITE_ID` | UUID | Site identifier |
 | `SCHOOL_YEAR_START` | Date | School year start |
 | `SCHOOL_YEAR_END` | Date | School year end |
+| `MODULE` | `Ticketing` | `Ticketing` or `Facilities` — selects IIQ module |
 
 ### Optional (have defaults)
 
@@ -162,6 +167,7 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 | `SCHOOL_YEAR_LOCKED_START` | Locked start date |
 | `SCHOOL_YEAR_LOCKED_END` | Locked end date |
 | `PAGE_SIZE_LOCKED` | Locked page size |
+| `MODULE_LOCKED` | Locked module selection |
 | `LAST_SYNC` | Last successful sync timestamp |
 | `OPEN_REFRESH_STAGE` | `OPEN`/`CLOSED` stage during refresh |
 | `OPEN_REFRESH_OPEN_PAGE` | Current page for open ticket refresh |
@@ -175,3 +181,11 @@ Analytics sheets use **ActivityLog** as the data source with **DateFilters** for
 - `HSTACK(...)` to combine columns, `SORT(...)` to order results
 - All formulas reference **Name columns** (not ID columns) for `UNIQUE`/`COUNTIFS`
 - Key column references in formulas: `R` = TeamName, `N` = PerformedByUser, `T` = LocationName, `J` = LaborTypeName, `L` = ResolutionActionName, `F` = EffortHours, `H` = LaborCost, `D` = ActivityDate, `B` = TicketId
+
+## Changelog
+
+After every code change (new features, bug fixes, refactors), update `CHANGELOG.md` in the project root. Follow the format already established in that file:
+- Group entries under a date heading (`## YYYY-MM-DD`)
+- Use `### Added`, `### Changed`, `### Fixed` sub-headings as appropriate
+- Each entry is a concise bullet describing the change and which file(s) were affected
+- Add to the existing date section if multiple changes happen on the same day; otherwise create a new date heading at the top (newest first)

@@ -22,6 +22,7 @@ function onOpen() {
       .addItem('Start Initial Load', 'startInitialLoad')
       .addItem('Continue Loading', 'executeNextLoad')
       .addItem('Refresh Reference Data', 'menuRefreshReferenceData')
+      .addItem('Refresh Labor Types', 'menuRefreshLaborTypes')
       .addItem('Open Ticket Refresh', 'startOpenRefresh'))
     .addSubMenu(ui.createMenu('Troubleshooting')
       .addItem('View Logs', 'showLogs')
@@ -75,6 +76,20 @@ function menuRefreshReferenceData() {
   try {
     refreshReferenceData();
     SpreadsheetApp.getUi().alert('Done', 'Reference data refreshed.', SpreadsheetApp.getUi().ButtonSet.OK);
+  } finally {
+    releaseScriptLock(lock);
+  }
+}
+
+function menuRefreshLaborTypes() {
+  const lock = acquireScriptLock();
+  if (!lock) { showOperationBusyMessage('Refresh Labor Types'); return; }
+  try {
+    loadLaborTypes();
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName('LaborTypes');
+    const count = sheet && sheet.getLastRow() > 1 ? sheet.getLastRow() - 1 : 0;
+    SpreadsheetApp.getUi().alert('Done', 'Labor types refreshed from API (' + count + ' types loaded).', SpreadsheetApp.getUi().ButtonSet.OK);
   } finally {
     releaseScriptLock(lock);
   }

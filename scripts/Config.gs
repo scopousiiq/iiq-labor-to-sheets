@@ -6,12 +6,25 @@ const CONFIG_DEFAULTS = {
   'PAGE_SIZE': '2000',
   'THROTTLE_MS': '1000',
   'OPEN_REFRESH_DAYS': '14',
-  'SCHOOL_YEAR_LOCKED': 'FALSE'
+  'SCHOOL_YEAR_LOCKED': 'FALSE',
+  'MODULE': 'Ticketing'
 };
 
-const CONFIG_REQUIRED = ['API_BASE_URL', 'BEARER_TOKEN', 'SITE_ID', 'SCHOOL_YEAR_START', 'SCHOOL_YEAR_END'];
+const CONFIG_REQUIRED = ['API_BASE_URL', 'BEARER_TOKEN', 'SITE_ID', 'SCHOOL_YEAR_START', 'SCHOOL_YEAR_END', 'MODULE'];
 
-const PRODUCT_ID = '88df910c-91aa-e711-80c2-0004ffa00010';
+const PRODUCT_ID_MAP = {
+  'Ticketing': '88df910c-91aa-e711-80c2-0004ffa00010',
+  'Facilities': '88df910c-91aa-e711-80c2-0004ffa00020'
+};
+
+function getProductId() {
+  const module = getStringValue(getConfig('MODULE')) || 'Ticketing';
+  const id = PRODUCT_ID_MAP[module];
+  if (!id) {
+    throw new Error('Invalid MODULE value: "' + module + '". Must be Ticketing or Facilities.');
+  }
+  return id;
+}
 
 function getConfigSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -169,6 +182,8 @@ function getApiHeaders() {
     headers['SiteId'] = siteId;
   }
 
+  headers['ProductId'] = getProductId();
+
   return headers;
 }
 
@@ -247,14 +262,17 @@ function lockSchoolYearConfig() {
     throw new Error('Cannot lock config: PAGE_SIZE is invalid.');
   }
 
+  const module = getStringValue(getConfig('MODULE')) || 'Ticketing';
+
   setConfig('SCHOOL_YEAR_LOCKED', 'TRUE');
   setConfig('SCHOOL_YEAR_LOCKED_AT', new Date().toISOString());
   setConfig('SCHOOL_YEAR_LOCKED_START', formatDateISO(start));
   setConfig('SCHOOL_YEAR_LOCKED_END', formatDateISO(end));
   setConfig('PAGE_SIZE_LOCKED', String(pageSize));
+  setConfig('MODULE_LOCKED', module);
 
   protectLockedConfigCells(true);
-  logOperation('CONFIG', 'INFO', 'School year locked');
+  logOperation('CONFIG', 'INFO', 'School year locked (Module: ' + module + ')');
 }
 
 function unlockSchoolYearConfig() {
@@ -263,6 +281,7 @@ function unlockSchoolYearConfig() {
   setConfig('SCHOOL_YEAR_LOCKED_START', '');
   setConfig('SCHOOL_YEAR_LOCKED_END', '');
   setConfig('PAGE_SIZE_LOCKED', '');
+  setConfig('MODULE_LOCKED', '');
 
   protectLockedConfigCells(false);
   logOperation('CONFIG', 'INFO', 'School year unlocked');
@@ -287,6 +306,12 @@ function assertSchoolYearUnchanged() {
   if (lockedPageSize > 0 && currentPageSize > 0 && lockedPageSize !== currentPageSize) {
     throw new Error('PAGE_SIZE is locked. Run a full reload to change PAGE_SIZE.');
   }
+
+  const lockedModule = getStringValue(getConfig('MODULE_LOCKED'));
+  const currentModule = getStringValue(getConfig('MODULE')) || 'Ticketing';
+  if (lockedModule && lockedModule !== currentModule) {
+    throw new Error('MODULE is locked. Run a full reload to change the module.');
+  }
 }
 
 function ensureSchoolYearLocked() {
@@ -297,7 +322,7 @@ function ensureSchoolYearLocked() {
 
 function protectLockedConfigCells(shouldLock) {
   const sheet = getConfigSheet();
-  const rows = findConfigRows(['SCHOOL_YEAR_START', 'SCHOOL_YEAR_END', 'PAGE_SIZE']);
+  const rows = findConfigRows(['SCHOOL_YEAR_START', 'SCHOOL_YEAR_END', 'PAGE_SIZE', 'MODULE']);
   if (rows.length === 0) return;
 
   if (shouldLock) {

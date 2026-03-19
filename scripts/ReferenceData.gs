@@ -5,25 +5,39 @@
 function refreshReferenceData() {
   loadTeams();
   loadUsers();
+  loadLaborTypes();
   loadResolutionActions();
 }
 
 function loadTeams() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('Teams');
-  if (!sheet) throw new Error('Teams sheet not found.');
+  deleteSheetIfExists(ss, 'Teams');
+  const sheet = ss.insertSheet('Teams');
+  const headers = ['TeamId', 'TeamName', 'MemberCount', 'OpenTickets'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
 
   const teams = fetchAllPagesWithQueryParams('/v1.0/teams', null, 'GET');
-  const rows = teams.map(t => [
-    t.TeamId || t.TeamID || t.Id || '',
-    t.TeamName || t.Name || '',
-    t.MembersCount || t.MemberCount || '',
-    t.Tickets || t.OpenTickets || ''
-  ]);
+
+  // API does not return open ticket counts — column D is formula-driven (see setupTeamsSheet)
+  const rows = teams.map(function(t) {
+    var memberCount = [t.MembersCount, t.MemberCount].find(function(v) { return v != null; });
+    return [
+      t.TeamId || t.TeamID || t.Id || '',
+      t.TeamName || t.Name || '',
+      memberCount != null ? memberCount : ''
+    ];
+  });
 
   clearSheetData(sheet);
   if (rows.length > 0) {
-    sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+    sheet.getRange(2, 1, rows.length, 3).setValues(rows);
+    // OpenTickets formula: count RawData rows where AssignedTeamId matches and IsClosed="Open"
+    var formulas = rows.map(function(_, i) {
+      var r = i + 2;
+      return ['=COUNTIFS(RawData!T:T,A' + r + ',RawData!R:R,"Open")'];
+    });
+    sheet.getRange(2, 4, formulas.length, 1).setFormulas(formulas);
   }
 
   logOperation('REF_TEAMS', 'SUCCESS', 'Loaded ' + rows.length + ' teams');
@@ -106,6 +120,33 @@ function loadUsers() {
   writeConfigValueDirect('USER_LOAD_TEAM_INDEX', '');
   setLoadState(DATA_LOAD_TYPES.USERS, LOAD_STATES.COMPLETE);
   logOperation('REF_USERS', 'SUCCESS', 'Loaded users from ' + teamRows.length + ' teams');
+}
+
+function loadLaborTypes() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('LaborTypes');
+  if (!sheet) throw new Error('LaborTypes sheet not found.');
+
+  const productId = getProductId();
+  const items = fetchAllPagesWithQueryParams(
+    '/v1.0/labor/types?ProductId=' + productId, null, 'GET'
+  );
+
+  const rows = items.map(function(lt) {
+    return [
+      lt.LaborTypeId || lt.Id || '',
+      lt.Name || '',
+      lt.IsOvertime === true ? 'TRUE' : 'FALSE',
+      lt.OTMultiplier || 0
+    ];
+  });
+
+  clearSheetData(sheet);
+  if (rows.length > 0) {
+    sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+  }
+
+  logOperation('REF_LABOR_TYPES', 'SUCCESS', 'Loaded ' + rows.length + ' labor types');
 }
 
 function loadResolutionActions() {

@@ -59,6 +59,9 @@ function setupLaborTrackerDashboard() {
   if (setupByDepartmentSheet(ss)) created.push('ByDepartment'); else skipped.push('ByDepartment');
   if (setupByLaborTypeSheet(ss)) created.push('ByLaborType'); else skipped.push('ByLaborType');
   if (setupByResolutionSheet(ss)) created.push('ByResolution'); else skipped.push('ByResolution');
+  if (setupIndividualLookupSheet(ss)) created.push('IndividualLookup'); else skipped.push('IndividualLookup');
+  if (setupAgentPivotSheet(ss)) created.push('AgentPivot'); else skipped.push('AgentPivot');
+  if (setupZeroLaborSheet(ss)) created.push('ZeroLabor'); else skipped.push('ZeroLabor');
   if (setupDashboardSheet(ss)) created.push('Dashboard'); else skipped.push('Dashboard');
   if (setupYearSummarySheet(ss)) created.push('YearSummary'); else skipped.push('YearSummary');
   if (setupLogsSheet(ss)) created.push('Logs'); else skipped.push('Logs');
@@ -84,12 +87,17 @@ var SHEET_ORDER = [
   'RawData', 'ActivityLog',
   'Teams', 'Users', 'LaborTypes', 'ResolutionActions',
   'ByTeam', 'ByIndividual', 'ByDepartment', 'ByLaborType', 'ByResolution',
-  'YearSummary', 'Dashboard', 'Logs',
+  'IndividualLookup', 'AgentPivot', 'ZeroLabor', 'YearSummary', 'Dashboard', 'Logs',
   // Hidden / internal (end of tab bar)
   'TicketIndex', 'ActivityIndex', 'ActivityFailures'
 ];
 
 function reorderSheets(ss) {
+  // Flush pending sheet create/delete operations before reordering —
+  // without this, activate()+moveActiveSheet() can fail after rapid
+  // delete-and-recreate cycles during regenerateAnalyticsSheets().
+  SpreadsheetApp.flush();
+
   var position = 1;
   SHEET_ORDER.forEach(function(name) {
     var sheet = ss.getSheetByName(name);
@@ -155,6 +163,7 @@ function setupInstructionsSheet(ss) {
   writeLine('     API_BASE_URL  —  your district\'s IncidentIQ URL (e.g. https://district.incidentiq.com)');
   writeLine('     BEARER_TOKEN  —  your API bearer token (JWT)');
   writeLine('     SITE_ID  —  your site UUID');
+  writeLine('     MODULE  —  Ticketing or Facilities (selects the IncidentIQ module)');
   writeLine('     SCHOOL_YEAR_START / SCHOOL_YEAR_END  —  the date range for data');
   writeLine('3. Run  iiQ Data > Setup > Test API Connection  to verify credentials');
   writeLine('4. Run  iiQ Data > Load Data > Start Initial Load  to begin pulling data');
@@ -195,6 +204,9 @@ function setupInstructionsSheet(ss) {
   writePair('ByDepartment', 'Rollup: hours, cost, entry count per location/department');
   writePair('ByLaborType', 'Rollup: hours, cost, entry count per labor type');
   writePair('ByResolution', 'Rollup: hours, cost, entry count per resolution action');
+  writePair('IndividualLookup', 'Select an individual to see their tickets and activity detail');
+  writePair('AgentPivot', 'Per-agent hours broken down by labor type (Standard, Travel, Overtime, Weekend)');
+  writePair('ZeroLabor', 'Closed tickets with zero labor hours logged (flag for review)');
   writePair('YearSummary', 'Monthly aggregation by team, agent, labor type, and resolution');
   writePair('Dashboard', 'KPI summary referencing the rollup sheets');
   writePair('Logs', 'Operation log (newest first, auto-trimmed to 1000 rows)');
@@ -202,16 +214,20 @@ function setupInstructionsSheet(ss) {
 
   // ===== DATE FILTERS =====
   writeSectionHeader('USING DATE FILTERS');
-  writeLine('All rollup sheets (ByTeam, ByIndividual, etc.) filter data by the DateFilters sheet.');
+  writeLine('All rollup sheets (ByTeam, ByIndividual, AgentPivot, etc.) filter by the DateFilters sheet.');
   writeLine('Change the Filter Mode dropdown in DateFilters!B2 to adjust the date range:');
   blankRow();
   writePairBold('Filter Mode', 'Date Range');
-  writePair('School YTD', 'School year start through today (default)');
-  writePair('MTD', 'First of current month through today');
-  writePair('QTD', 'First of current quarter through today');
-  writePair('YTD', 'January 1 through today');
-  writePair('Last 7 Days', 'Past 7 days');
-  writePair('Last 30 Days', 'Past 30 days');
+  writePair('This Month', 'First of current month through today');
+  writePair('Last Month', 'Full previous month');
+  writePair('This Week', 'Monday of current week through today');
+  writePair('Last Week', 'Full previous week (Monday–Sunday)');
+  writePair('This Quarter', 'First of current quarter through today');
+  writePair('Last Quarter', 'Full previous quarter');
+  writePair('This Calendar Year', 'January 1 through today');
+  writePair('Last Calendar Year', 'Full previous calendar year');
+  writePair('This School Year', 'School year start through today (default)');
+  writePair('Last School Year', 'Full previous school year');
   writePair('Manual', 'Custom start/end dates (fill in rows 3 and 4)');
   blankRow();
   writeLine('Rollup formulas recalculate automatically when you change the filter mode.');
@@ -262,7 +278,7 @@ function setupInstructionsSheet(ss) {
   writeLine('Each spreadsheet holds one school year of data. The date range is set in Config:');
   writeLine('  SCHOOL_YEAR_START  and  SCHOOL_YEAR_END');
   blankRow();
-  writeLine('Once data loading begins, the school year dates are LOCKED to prevent accidental changes.');
+  writeLine('Once data loading begins, the school year dates and Module are LOCKED to prevent accidental changes.');
   writeLine('To load a different school year:');
   writeLine('  1. Remove triggers  (iiQ Data > Setup > Remove Automated Triggers)');
   writeLine('  2. Full Reload  (iiQ Data > Troubleshooting > Full Reload) — this clears all data and unlocks dates');
@@ -316,6 +332,7 @@ function setupConfigSheet(ss) {
     ['API_BASE_URL', 'https://your-district.incidentiq.com', 'Base URL only (no /api)'],
     ['BEARER_TOKEN', '', 'Paste your JWT token'],
     ['SITE_ID', '', 'Site UUID'],
+    ['MODULE', 'Ticketing', 'Ticketing or Facilities'],
     ['SCHOOL_YEAR_START', defaultStart, 'School year start (YYYY-MM-DD)'],
     ['SCHOOL_YEAR_END', defaultEnd, 'School year end (YYYY-MM-DD)'],
     ['PAGE_SIZE', '2000', 'Records per API call'],
@@ -329,7 +346,8 @@ function setupConfigSheet(ss) {
     ['SCHOOL_YEAR_LOCKED_AT', '', 'Managed automatically'],
     ['SCHOOL_YEAR_LOCKED_START', '', 'Managed automatically'],
     ['SCHOOL_YEAR_LOCKED_END', '', 'Managed automatically'],
-    ['PAGE_SIZE_LOCKED', '', 'Managed automatically']
+    ['PAGE_SIZE_LOCKED', '', 'Managed automatically'],
+    ['MODULE_LOCKED', '', 'Managed automatically']
   ];
 
   sheet.getRange(2, 1, rows.length, 3).setValues(rows);
@@ -338,7 +356,17 @@ function setupConfigSheet(ss) {
   const labelIndex = rows.findIndex(row => row[0] === 'SCHOOL_YEAR_LABEL');
   if (labelIndex >= 0) {
     const labelRow = 2 + labelIndex;
-    sheet.getRange(labelRow, 2).setFormula('=TEXT(B5,"YYYY")&"-"&TEXT(B6,"YYYY")');
+    sheet.getRange(labelRow, 2).setFormula('=TEXT(B6,"YYYY")&"-"&TEXT(B7,"YYYY")');
+  }
+
+  // Data validation dropdown for MODULE
+  const moduleIndex = rows.findIndex(row => row[0] === 'MODULE');
+  if (moduleIndex >= 0) {
+    const moduleRow = 2 + moduleIndex;
+    const moduleRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(['Ticketing', 'Facilities'], true)
+      .build();
+    sheet.getRange(moduleRow, 2).setDataValidation(moduleRule);
   }
 
   sheet.setColumnWidths(1, 3, 240);
@@ -352,36 +380,63 @@ function setupDateFiltersSheet(ss) {
   sheet.getRange(1, 1, 1, 3).setFontWeight('bold');
 
   const rows = [
-    ['Filter Mode', 'School YTD', 'Manual, MTD, QTD, YTD, School YTD, Last 7 Days, Last 30 Days'],
+    ['Filter Mode', 'This School Year', 'Select a predefined range or Manual for custom dates'],
     ['Start Date', '', 'Used only when Filter Mode = Manual'],
     ['End Date', '', 'Used only when Filter Mode = Manual'],
     ['Calculated Start', '', 'Auto-calculated start'],
-    ['Calculated End', '', 'Auto-calculated end']
+    ['Calculated End', '', 'Auto-calculated end'],
+    ['School Year Start', '', 'Full school year start (used by YearSummary)'],
+    ['School Year End', '', 'Full school year end (used by YearSummary)']
   ];
 
   sheet.getRange(2, 1, rows.length, 3).setValues(rows);
 
+  // Calculated Start — SWITCH on filter mode
+  // Week starts Monday (WEEKDAY type 2: 1=Mon..7=Sun)
   sheet.getRange('B5').setFormula(
     '=SWITCH(B2,' +
     '"Manual",B3,' +
-    '"MTD",EOMONTH(TODAY(),-1)+1,' +
-    '"QTD",DATE(YEAR(TODAY()),CEILING(MONTH(TODAY())/3,1)*3-2,1),' +
-    '"YTD",DATE(YEAR(TODAY()),1,1),' +
-    '"School YTD",VLOOKUP("SCHOOL_YEAR_START",Config!A:B,2,FALSE),' +
-    '"Last 7 Days",TODAY()-6,' +
-    '"Last 30 Days",TODAY()-29,' +
+    '"This Month",EOMONTH(TODAY(),-1)+1,' +
+    '"Last Month",EOMONTH(TODAY(),-2)+1,' +
+    '"This Week",TODAY()-WEEKDAY(TODAY(),2)+1,' +
+    '"Last Week",TODAY()-WEEKDAY(TODAY(),2)+1-7,' +
+    '"This Quarter",DATE(YEAR(TODAY()),CEILING(MONTH(TODAY())/3,1)*3-2,1),' +
+    '"Last Quarter",EDATE(DATE(YEAR(TODAY()),CEILING(MONTH(TODAY())/3,1)*3-2,1),-3),' +
+    '"This Calendar Year",DATE(YEAR(TODAY()),1,1),' +
+    '"Last Calendar Year",DATE(YEAR(TODAY())-1,1,1),' +
+    '"This School Year",VLOOKUP("SCHOOL_YEAR_START",Config!A:B,2,FALSE),' +
+    '"Last School Year",EDATE(VLOOKUP("SCHOOL_YEAR_START",Config!A:B,2,FALSE),-12),' +
     'VLOOKUP("SCHOOL_YEAR_START",Config!A:B,2,FALSE))'
   );
 
+  // Calculated End — modes that end before today get explicit end dates;
+  // all "This" modes default to TODAY()
   sheet.getRange('B6').setFormula(
     '=SWITCH(B2,' +
     '"Manual",B4,' +
-    '"School YTD",MIN(TODAY(),VLOOKUP("SCHOOL_YEAR_END",Config!A:B,2,FALSE)),' +
+    '"Last Month",EOMONTH(TODAY(),-1),' +
+    '"Last Week",TODAY()-WEEKDAY(TODAY(),2),' +
+    '"Last Quarter",DATE(YEAR(TODAY()),CEILING(MONTH(TODAY())/3,1)*3-2,1)-1,' +
+    '"Last Calendar Year",DATE(YEAR(TODAY())-1,12,31),' +
+    '"This School Year",MIN(TODAY(),VLOOKUP("SCHOOL_YEAR_END",Config!A:B,2,FALSE)),' +
+    '"Last School Year",VLOOKUP("SCHOOL_YEAR_START",Config!A:B,2,FALSE)-1,' +
     'TODAY())'
   );
 
+  // Fixed school year dates — always the full school year, independent of filter mode.
+  sheet.getRange('B7').setFormula('=VLOOKUP("SCHOOL_YEAR_START",Config!A:B,2,FALSE)');
+  sheet.getRange('B8').setFormula('=VLOOKUP("SCHOOL_YEAR_END",Config!A:B,2,FALSE)');
+
+  const filterModes = [
+    'Manual',
+    'This Month', 'Last Month',
+    'This Week', 'Last Week',
+    'This Quarter', 'Last Quarter',
+    'This Calendar Year', 'Last Calendar Year',
+    'This School Year', 'Last School Year'
+  ];
   const rule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(['Manual', 'MTD', 'QTD', 'YTD', 'School YTD', 'Last 7 Days', 'Last 30 Days'], true)
+    .requireValueInList(filterModes, true)
     .build();
   sheet.getRange('B2').setDataValidation(rule);
 
@@ -426,9 +481,9 @@ function setupUsersSheet(ss) {
 }
 
 function setupLaborTypesSheet(ss) {
-  if (ss.getSheetByName('LaborTypes')) return false;
+  deleteSheetIfExists(ss, 'LaborTypes');
   const sheet = ss.insertSheet('LaborTypes');
-  const headers = ['LaborTypeId', 'LaborTypeName'];
+  const headers = ['LaborTypeId', 'LaborTypeName', 'IsOvertime', 'OTMultiplier'];
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
   return true;
@@ -536,6 +591,159 @@ function setupByLaborTypeSheet(ss) {
   return true;
 }
 
+function setupIndividualLookupSheet(ss) {
+  deleteSheetIfExists(ss, 'IndividualLookup');
+  const sheet = ss.insertSheet('IndividualLookup');
+
+  // --- Layout ---
+  // Row 1: title
+  // Row 2: "Select Individual" label + dropdown in B2
+  // Row 3: Summary row (total hours, total cost, entry count, ticket count)
+  // Row 4: blank
+  // Row 5: detail headers
+  // Row 6+: detail formula
+
+  sheet.getRange('A1').setValue('Individual Lookup').setFontWeight('bold').setFontSize(14);
+
+  sheet.getRange('A2').setValue('Select Individual').setFontWeight('bold');
+
+  // Dynamic dropdown: individuals active in the filtered date range
+  const dropdownFormula =
+    '=SORT(UNIQUE(FILTER(ActivityLog!N2:N,ActivityLog!N2:N<>"",ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6)))';
+  sheet.getRange('P2').setFormula(dropdownFormula);
+
+  // Data validation referencing the dynamic list
+  const dropdownRule = SpreadsheetApp.newDataValidation()
+    .requireValueInRange(sheet.getRange('P2:P'), true)
+    .build();
+  sheet.getRange('B2').setDataValidation(dropdownRule);
+
+  // Summary labels (row 3)
+  sheet.getRange('A3').setValue('Period').setFontWeight('bold');
+  sheet.getRange('B3').setFormula('=TEXT(DateFilters!B5,"MMM D, YYYY")&" - "&TEXT(DateFilters!B6,"MMM D, YYYY")');
+
+  sheet.getRange('A4').setValue('Total Hours').setFontWeight('bold');
+  sheet.getRange('B4').setFormula(
+    '=IF(B2="","",SUMIFS(ActivityLog!F:F,ActivityLog!N:N,B2,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6))'
+  );
+  sheet.getRange('C4').setValue('Total Cost').setFontWeight('bold');
+  sheet.getRange('D4').setFormula(
+    '=IF(B2="","",SUMIFS(ActivityLog!H:H,ActivityLog!N:N,B2,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6))'
+  );
+
+  sheet.getRange('A5').setValue('Entries').setFontWeight('bold');
+  sheet.getRange('B5').setFormula(
+    '=IF(B2="","",COUNTIFS(ActivityLog!N:N,B2,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6))'
+  );
+  sheet.getRange('C5').setValue('Tickets').setFontWeight('bold');
+  sheet.getRange('D5').setFormula(
+    '=IF(B2="","",IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!N2:N=B2,ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6)),0))'
+  );
+
+  // Overtime row (row 6) — auto-detected from LaborTypes IsOvertime column
+  sheet.getRange('A6').setValue('Overtime').setFontWeight('bold').setFontSize(11);
+
+  // OT Hours: sum ActivityLog EffortHours where individual matches, date in range,
+  // and the activity's LaborTypeId is in the set of LaborTypes where IsOvertime=TRUE
+  sheet.getRange('B6').setValue('OT Hours').setFontWeight('bold');
+  sheet.getRange('C6').setFormula(
+    '=IF(B2="","",' +
+    'IFERROR(SUMPRODUCT(' +
+    '(ActivityLog!N$2:N=$B$2)' +
+    '*(ActivityLog!D$2:D>=DateFilters!$B$5)' +
+    '*(ActivityLog!D$2:D<=DateFilters!$B$6)' +
+    '*(COUNTIFS(LaborTypes!A$2:A,ActivityLog!I$2:I,LaborTypes!C$2:C,"TRUE"))' +
+    '*ActivityLog!F$2:F' +
+    '),0))'
+  );
+
+  sheet.getRange('D6').setValue('OT Cost').setFontWeight('bold');
+  sheet.getRange('E6').setFormula(
+    '=IF(B2="","",' +
+    'IFERROR(SUMPRODUCT(' +
+    '(ActivityLog!N$2:N=$B$2)' +
+    '*(ActivityLog!D$2:D>=DateFilters!$B$5)' +
+    '*(ActivityLog!D$2:D<=DateFilters!$B$6)' +
+    '*(COUNTIFS(LaborTypes!A$2:A,ActivityLog!I$2:I,LaborTypes!C$2:C,"TRUE"))' +
+    '*ActivityLog!H$2:H' +
+    '),0))'
+  );
+
+  sheet.getRange('F6').setValue('OT Entries').setFontWeight('bold');
+  sheet.getRange('G6').setFormula(
+    '=IF(B2="","",' +
+    'IFERROR(SUMPRODUCT(' +
+    '(ActivityLog!N$2:N=$B$2)' +
+    '*(ActivityLog!D$2:D>=DateFilters!$B$5)' +
+    '*(ActivityLog!D$2:D<=DateFilters!$B$6)' +
+    '*(COUNTIFS(LaborTypes!A$2:A,ActivityLog!I$2:I,LaborTypes!C$2:C,"TRUE"))' +
+    '),0))'
+  );
+
+  // Detail headers (row 7)
+  const detailHeaders = ['TicketNumber', 'Subject', 'ActivityDate', 'EffortHours', 'LaborCost', 'LaborType', 'ResolutionAction', 'Notes'];
+  sheet.getRange(7, 1, 1, detailHeaders.length).setValues([detailHeaders]);
+  sheet.getRange(7, 1, 1, detailHeaders.length).setFontWeight('bold');
+
+  // Detail formula — filtered activity rows for the selected individual
+  // Uses LET to filter first, then MAP to look up Subject from RawData and TEXT for date formatting
+  const detailFormula = '=IF(B2="","Select an individual from the dropdown above.",' +
+    'IFERROR(LET(' +
+    'startD,DateFilters!$B$5,' +
+    'endD,DateFilters!$B$6,' +
+    'raw,SORT(FILTER(' +
+    'HSTACK(ActivityLog!C2:C,ActivityLog!B2:B,ActivityLog!D2:D,ActivityLog!F2:F,ActivityLog!H2:H,ActivityLog!J2:J,ActivityLog!L2:L,ActivityLog!O2:O),' +
+    'ActivityLog!N2:N=B2,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD' +
+    '),3,FALSE),' +
+    'tNums,INDEX(raw,,1),' +
+    'tIds,INDEX(raw,,2),' +
+    'subjs,MAP(tIds,LAMBDA(id,IFERROR(INDEX(RawData!C:C,MATCH(id,RawData!A:A,0)),""))),'+
+    'dates,TEXT(INDEX(raw,,3),"M/D/YYYY"),' +
+    'HSTACK(tNums,subjs,dates,INDEX(raw,,{4,5,6,7,8}))' +
+    '),"No activity entries found for this individual in the selected date range."))';
+
+  sheet.getRange(8, 1).setFormula(detailFormula);
+
+  // Ticket summary below detail — unique tickets with aggregated hours
+  // This goes in column J+ so it sits beside the detail list
+  sheet.getRange(7, 10).setValue('Ticket Summary').setFontWeight('bold').setFontSize(11);
+  const ticketSummaryHeaders = ['TicketNumber', 'Subject', 'Total Hours', 'Total Cost', 'Entries'];
+  sheet.getRange(8, 10, 1, ticketSummaryHeaders.length).setValues([ticketSummaryHeaders]);
+  sheet.getRange(8, 10, 1, ticketSummaryHeaders.length).setFontWeight('bold');
+
+  const ticketSummaryFormula = '=IF(B2="","",' +
+    'IFERROR(LET(' +
+    'startD,DateFilters!$B$5,' +
+    'endD,DateFilters!$B$6,' +
+    'ids,UNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!N2:N=B2,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
+    'nums,BYROW(ids,LAMBDA(id,IFERROR(INDEX(ActivityLog!C:C,MATCH(id,ActivityLog!B:B,0)),"?"))),' +
+    'subjs,BYROW(ids,LAMBDA(id,IFERROR(INDEX(RawData!C:C,MATCH(id,RawData!A:A,0)),"?"))),' +
+    'hours,BYROW(ids,LAMBDA(id,SUMIFS(ActivityLog!F:F,ActivityLog!B:B,id,ActivityLog!N:N,B2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'cost,BYROW(ids,LAMBDA(id,SUMIFS(ActivityLog!H:H,ActivityLog!B:B,id,ActivityLog!N:N,B2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'entries,BYROW(ids,LAMBDA(id,COUNTIFS(ActivityLog!B:B,id,ActivityLog!N:N,B2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'SORT(HSTACK(nums,subjs,hours,cost,entries),3,FALSE)' +
+    '),"No tickets found."))';
+
+  sheet.getRange(9, 10).setFormula(ticketSummaryFormula);
+
+  // Hide the helper column P (dynamic list for dropdown)
+  sheet.hideColumns(16, 1);
+
+  // Column widths
+  sheet.setColumnWidth(1, 140);
+  sheet.setColumnWidth(2, 200);
+  sheet.setColumnWidth(3, 130);
+  sheet.setColumnWidth(8, 250);  // Notes
+  sheet.setColumnWidth(10, 140);
+  sheet.setColumnWidth(11, 250); // Subject
+  sheet.setColumnWidth(12, 100);
+  sheet.setColumnWidth(13, 100);
+  sheet.setColumnWidth(14, 80);
+
+  sheet.setFrozenRows(7);
+  return true;
+}
+
 function setupByResolutionSheet(ss) {
   deleteSheetIfExists(ss, 'ByResolution');
   const sheet = ss.insertSheet('ByResolution');
@@ -556,6 +764,91 @@ function setupByResolutionSheet(ss) {
     ')';
 
   sheet.getRange(2, 1).setFormula(formula);
+  return true;
+}
+
+function setupAgentPivotSheet(ss) {
+  deleteSheetIfExists(ss, 'AgentPivot');
+  const sheet = ss.insertSheet('AgentPivot');
+
+  // Row 1: Sort controls
+  sheet.getRange('A1').setValue('Sort By').setFontWeight('bold');
+  sheet.getRange('B1').setValue('Total Hours');
+  sheet.getRange('C1').setValue('Order').setFontWeight('bold');
+  sheet.getRange('D1').setValue('Descending');
+
+  // Sort By dropdown — column names matching row 2 headers
+  const sortByRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['Agent', 'Team', 'Standard', 'Travel', 'Overtime', 'Weekend', 'Total Hours'], true)
+    .build();
+  sheet.getRange('B1').setDataValidation(sortByRule);
+
+  // Order dropdown
+  const orderRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['Ascending', 'Descending'], true)
+    .build();
+  sheet.getRange('D1').setDataValidation(orderRule);
+
+  // Row 2: Headers — labor type names reference ActivityLog!J (LaborTypeName).
+  // Adjust C2:F2 to match your district's labor type names.
+  const headers = ['Agent', 'Team', 'Standard', 'Travel', 'Overtime', 'Weekend', 'Total Hours'];
+  sheet.getRange(2, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(2, 1, 1, headers.length).setFontWeight('bold');
+
+  // Formula references header cells ($C$2..$F$2) so users can rename labor types
+  // without editing the formula. Each column SUMIFs where LaborTypeName matches
+  // the header text. Total is all hours regardless of type.
+  // Sort column determined by SWITCH on $B$1, sort direction by $D$1.
+  const formula = '=LET(' +
+    'startD,DateFilters!$B$5,' +
+    'endD,DateFilters!$B$6,' +
+    'users,UNIQUE(FILTER(ActivityLog!N2:N,ActivityLog!N2:N<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
+    'teams,BYROW(users,LAMBDA(u,IFERROR(INDEX(ActivityLog!R:R,MATCH(u,ActivityLog!N:N,0)),"---"))),' +
+    'stdH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$C$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'trvH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$D$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'otH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$E$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'wkndH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$F$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'total,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'sCol,SWITCH($B$1,"Agent",1,"Team",2,$C$2,3,$D$2,4,$E$2,5,$F$2,6,7),' +
+    'sAsc,$D$1="Ascending",' +
+    'SORT(IFERROR(HSTACK(users,teams,stdH,trvH,otH,wkndH,total),0),sCol,sAsc)' +
+    ')';
+
+  sheet.getRange(3, 1).setFormula(formula);
+
+  sheet.setColumnWidth(1, 200);
+  sheet.setColumnWidth(2, 180);
+  sheet.setFrozenRows(2);
+  return true;
+}
+
+function setupZeroLaborSheet(ss) {
+  deleteSheetIfExists(ss, 'ZeroLabor');
+  const sheet = ss.insertSheet('ZeroLabor');
+
+  // Closed tickets with zero labor hours in the filtered date range.
+  // Helps managers find "Work Complete" tickets where no time was logged.
+  const headers = ['TicketNumber', 'Subject', 'CreatedDate', 'ClosedDate', 'AssignedUser', 'AssignedTeam', 'Location', 'Status'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+
+  // Wrap dates in TEXT() to prevent serial number display in HSTACK output
+  const formula = '=LET(' +
+    'startD,DateFilters!$B$5,' +
+    'endD,DateFilters!$B$6,' +
+    'IFERROR(SORT(FILTER(' +
+    'HSTACK(RawData!B2:B,RawData!C2:C,TEXT(RawData!D2:D,"M/D/YYYY"),TEXT(RawData!E2:E,"M/D/YYYY"),RawData!K2:K,RawData!M2:M,RawData!N2:N,RawData!P2:P),' +
+    'RawData!R2:R="Closed",' +
+    'RawData!F2:F=0,' +
+    'RawData!D2:D>=startD,' +
+    'RawData!D2:D<=endD' +
+    '),4,FALSE),' +
+    '"No closed tickets with zero labor found in the selected date range."))';
+
+  sheet.getRange(2, 1).setFormula(formula);
+
+  sheet.setColumnWidth(2, 300);  // Subject
+  sheet.setColumnWidth(7, 200);  // Location
   return true;
 }
 
@@ -592,25 +885,45 @@ function setupDashboardSheet(ss) {
 function setupYearSummarySheet(ss) {
   deleteSheetIfExists(ss, 'YearSummary');
   const sheet = ss.insertSheet('YearSummary');
-  const headers = ['SchoolYear', 'GroupType', 'Month', 'GroupName', 'Hours', 'Cost', 'ActivityCount', 'TicketCount'];
+  const headers = ['SchoolYear', 'GroupType', 'Month', 'GroupName', 'Hours', 'Cost', 'ActivityCount'];
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
 
+  // Queries ActivityLog range directly (not a constructed array) so QUERY
+  // correctly detects numeric column types for sum(). Uses QUERY's built-in
+  // year()/month() functions and date literal syntax for filtering.
+  // Each group wrapped in IFERROR; empty groups produce placeholder rows
+  // that are filtered out after VSTACK.
   const formula = '=IFERROR(LET(' +
-    'syStart,VLOOKUP("SCHOOL_YEAR_START",Config!A:B,2,FALSE),' +
-    'syEnd,VLOOKUP("SCHOOL_YEAR_END",Config!A:B,2,FALSE),' +
+    'syStart,DateFilters!$B$7,' +
+    'syEnd,DateFilters!$B$8,' +
     'label,TEXT(syStart,"YYYY")&"-"&TEXT(syEnd,"YYYY"),' +
-    'data,FILTER({TEXT(ActivityLog!D2:D,"YYYY-MM"),ActivityLog!B2:B,ActivityLog!F2:F,ActivityLog!H2:H,ActivityLog!R2:R,ActivityLog!N2:N,ActivityLog!J2:J,ActivityLog!L2:L},ActivityLog!D2:D>=syStart,ActivityLog!D2:D<=syEnd,ActivityLog!D2:D<>""),' +
-    'teamAgg,QUERY(data,"select Col1,Col5,sum(Col3),sum(Col4),count(Col3),count(distinct Col2) where Col5 is not null group by Col1,Col5",0),' +
-    'teamOut,ARRAYFORMULA({label,"Team",INDEX(teamAgg,,1),INDEX(teamAgg,,2),INDEX(teamAgg,,3),INDEX(teamAgg,,4),INDEX(teamAgg,,5),INDEX(teamAgg,,6)}),' +
-    'agentAgg,QUERY(data,"select Col1,Col6,sum(Col3),sum(Col4),count(Col3),count(distinct Col2) where Col6 is not null group by Col1,Col6",0),' +
-    'agentOut,ARRAYFORMULA({label,"Agent",INDEX(agentAgg,,1),INDEX(agentAgg,,2),INDEX(agentAgg,,3),INDEX(agentAgg,,4),INDEX(agentAgg,,5),INDEX(agentAgg,,6)}),' +
-    'laborAgg,QUERY(data,"select Col1,Col7,sum(Col3),sum(Col4),count(Col3),count(distinct Col2) where Col7 is not null group by Col1,Col7",0),' +
-    'laborOut,ARRAYFORMULA({label,"LaborType",INDEX(laborAgg,,1),INDEX(laborAgg,,2),INDEX(laborAgg,,3),INDEX(laborAgg,,4),INDEX(laborAgg,,5),INDEX(laborAgg,,6)}),' +
-    'resAgg,QUERY(data,"select Col1,Col8,sum(Col3),sum(Col4),count(Col3),count(distinct Col2) where Col8 is not null group by Col1,Col8",0),' +
-    'resOut,ARRAYFORMULA({label,"Resolution",INDEX(resAgg,,1),INDEX(resAgg,,2),INDEX(resAgg,,3),INDEX(resAgg,,4),INDEX(resAgg,,5),INDEX(resAgg,,6)}),' +
-    'VSTACK(teamOut,agentOut,laborOut,resOut)' +
-    '),"")';
+    'dateClause," Col4>=date \'"&TEXT(syStart,"yyyy-MM-dd")&"\' and Col4<=date \'"&TEXT(syEnd,"yyyy-MM-dd")&"\'",' +
+    'empty,CHOOSE({1,2,3,4,5,6,7},"","","","","","",""),' +
+
+    'teamResult,IFERROR(LET(' +
+      'agg,QUERY(ActivityLog!A2:T,"select year(Col4),month(Col4)+1,Col18,sum(Col6),sum(Col8),count(Col6) where Col18 is not null and"&dateClause&" group by year(Col4),month(Col4)+1,Col18",0),' +
+      'mo,ARRAYFORMULA(TEXT(INDEX(agg,,1),"0")&"-"&TEXT(INDEX(agg,,2),"00")),' +
+      'HSTACK(ARRAYFORMULA(IF(mo<>"",label,"")),ARRAYFORMULA(IF(mo<>"","Team","")),mo,INDEX(agg,,3),INDEX(agg,,4),INDEX(agg,,5),INDEX(agg,,6))),empty),' +
+
+    'agentResult,IFERROR(LET(' +
+      'agg,QUERY(ActivityLog!A2:T,"select year(Col4),month(Col4)+1,Col14,sum(Col6),sum(Col8),count(Col6) where Col14 is not null and"&dateClause&" group by year(Col4),month(Col4)+1,Col14",0),' +
+      'mo,ARRAYFORMULA(TEXT(INDEX(agg,,1),"0")&"-"&TEXT(INDEX(agg,,2),"00")),' +
+      'HSTACK(ARRAYFORMULA(IF(mo<>"",label,"")),ARRAYFORMULA(IF(mo<>"","Agent","")),mo,INDEX(agg,,3),INDEX(agg,,4),INDEX(agg,,5),INDEX(agg,,6))),empty),' +
+
+    'laborResult,IFERROR(LET(' +
+      'agg,QUERY(ActivityLog!A2:T,"select year(Col4),month(Col4)+1,Col10,sum(Col6),sum(Col8),count(Col6) where Col10 is not null and"&dateClause&" group by year(Col4),month(Col4)+1,Col10",0),' +
+      'mo,ARRAYFORMULA(TEXT(INDEX(agg,,1),"0")&"-"&TEXT(INDEX(agg,,2),"00")),' +
+      'HSTACK(ARRAYFORMULA(IF(mo<>"",label,"")),ARRAYFORMULA(IF(mo<>"","LaborType","")),mo,INDEX(agg,,3),INDEX(agg,,4),INDEX(agg,,5),INDEX(agg,,6))),empty),' +
+
+    'resResult,IFERROR(LET(' +
+      'agg,QUERY(ActivityLog!A2:T,"select year(Col4),month(Col4)+1,Col12,sum(Col6),sum(Col8),count(Col6) where Col12 is not null and"&dateClause&" group by year(Col4),month(Col4)+1,Col12",0),' +
+      'mo,ARRAYFORMULA(TEXT(INDEX(agg,,1),"0")&"-"&TEXT(INDEX(agg,,2),"00")),' +
+      'HSTACK(ARRAYFORMULA(IF(mo<>"",label,"")),ARRAYFORMULA(IF(mo<>"","Resolution","")),mo,INDEX(agg,,3),INDEX(agg,,4),INDEX(agg,,5),INDEX(agg,,6))),empty),' +
+
+    'combined,VSTACK(teamResult,agentResult,laborResult,resResult),' +
+    'FILTER(combined,INDEX(combined,,4)<>"")' +
+    '),"No activity data found for the school year.")';
 
   sheet.getRange(2, 1).setFormula(formula);
   return true;
@@ -659,12 +972,16 @@ function setupActivityIndexSheet(ss) {
 
 function regenerateAnalyticsSheets() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  setupLaborTypesSheet(ss);
   setupDateFiltersSheet(ss);
   setupByTeamSheet(ss);
   setupByIndividualSheet(ss);
   setupByDepartmentSheet(ss);
   setupByLaborTypeSheet(ss);
   setupByResolutionSheet(ss);
+  setupIndividualLookupSheet(ss);
+  setupAgentPivotSheet(ss);
+  setupZeroLaborSheet(ss);
   setupDashboardSheet(ss);
   setupYearSummarySheet(ss);
   reorderSheets(ss);
@@ -676,8 +993,8 @@ function regenerateAnalyticsSheetsWithConfirm() {
   const response = ui.alert(
     'Regenerate Analytics Sheets',
     'This will delete and recreate all formula-driven analytics sheets ' +
-    '(DateFilters, ByTeam, ByIndividual, ByDepartment, ByLaborType, ByResolution, Dashboard, YearSummary).\n\n' +
-    'Data sheets (RawData, ActivityLog, etc.) will NOT be affected.\n\nContinue?',
+    '(LaborTypes, DateFilters, ByTeam, ByIndividual, ByDepartment, ByLaborType, ByResolution, IndividualLookup, AgentPivot, ZeroLabor, Dashboard, YearSummary).\n\n' +
+    'Data sheets (RawData, ActivityLog, etc.) will NOT be affected.\nLaborTypes will be recreated with updated headers (run Refresh Labor Types to repopulate).\n\nContinue?',
     ui.ButtonSet.YES_NO
   );
   if (response !== ui.Button.YES) return;

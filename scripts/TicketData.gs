@@ -21,7 +21,12 @@ function loadTicketsPaginated() {
   const range = getSchoolYearRange();
   const filters = buildTicketFilters(range.startDate, range.endDate);
 
-  while (Date.now() - startTime < MAX_RUNTIME_MS) {
+  while (true) {
+    if (Date.now() - startTime >= MAX_RUNTIME_MS) {
+      logOperation('TICKET_LOAD', 'INFO', 'Paused due to time limit. Page ' + page);
+      return;
+    }
+
     const response = searchTicketsPage(filters, page, pageSize);
     const items = response && response.Items ? response.Items : [];
 
@@ -31,7 +36,6 @@ function loadTicketsPaginated() {
       writeConfigValueDirect('TICKET_LOAD_PAGE', '');
       writeConfigValueDirect('TICKET_LOAD_TOTAL_PAGES',
         response && response.Paging ? String(response.Paging.PageCount) : '');
-      refreshLaborTypesFromTickets();
       return;
     }
 
@@ -46,13 +50,10 @@ function loadTicketsPaginated() {
         rebuildTicketIndex(sheet);
         setLoadState(DATA_LOAD_TYPES.TICKETS, LOAD_STATES.COMPLETE);
         writeConfigValueDirect('TICKET_LOAD_PAGE', '');
-        refreshLaborTypesFromTickets();
         return;
       }
     }
   }
-
-  logOperation('TICKET_LOAD', 'INFO', 'Paused due to time limit. Page ' + page);
 }
 
 function refreshOpenTickets() {
@@ -89,7 +90,12 @@ function refreshOpenTickets() {
   }
   let page = 0;
 
-  while (Date.now() - startTime < MAX_RUNTIME_MS) {
+  while (true) {
+    if (Date.now() - startTime >= MAX_RUNTIME_MS) {
+      logOperation('OPEN_REFRESH', 'INFO', 'Paused due to time limit.');
+      return;
+    }
+
     if (stage === 'OPEN') {
       page = getIntValue(getConfig('OPEN_REFRESH_OPEN_PAGE'), 0);
       if (page < 0) page = 0;
@@ -141,8 +147,6 @@ function refreshOpenTickets() {
       }
     }
   }
-
-  logOperation('OPEN_REFRESH', 'INFO', 'Paused due to time limit.');
 }
 
 function finishOpenRefresh() {
@@ -150,13 +154,14 @@ function finishOpenRefresh() {
   setConfig('OPEN_REFRESH_OPEN_PAGE', '');
   setConfig('OPEN_REFRESH_CLOSED_PAGE', '');
   setLoadState(DATA_LOAD_TYPES.OPEN_REFRESH, LOAD_STATES.COMPLETE);
+  loadLaborTypes();
   updateLastSync();
 }
 
 function searchTicketsPage(filters, page, pageSize) {
   const sortExpr = encodeURIComponent('TicketCreatedDate asc');
   const payload = {
-    ProductId: PRODUCT_ID,
+    ProductId: getProductId(),
     Filters: filters || [],
     FilterByProduct: true,
     IncludeDeleted: false
@@ -320,29 +325,38 @@ function writeBatchedUpdates(sheet, rowMap) {
   }
 }
 
-function refreshLaborTypesFromTickets() {
+// Offline fallback: extracts labor types from existing sheet data when API is unavailable.
+// Does not populate IsOvertime/OTMultiplier (those require the API via loadLaborTypes).
+function refreshLaborTypes() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const rawSheet = ss.getSheetByName('RawData');
   const laborSheet = ss.getSheetByName('LaborTypes');
-  if (!rawSheet || !laborSheet) return;
+  if (!laborSheet) return;
 
-  const lastRow = rawSheet.getLastRow();
-  if (lastRow < 2) return;
-
-  const values = rawSheet.getRange(2, 9, lastRow - 1, 2).getValues();
   const map = {};
-  values.forEach(row => {
-    const id = row[0];
-    const name = row[1];
-    if (id && name) {
-      map[id] = name;
-    }
-  });
 
-  const rows = Object.keys(map).map(id => [id, map[id]]);
+  // Primary source: ActivityLog columns I (LaborTypeId) and J (LaborTypeName)
+  var actSheet = ss.getSheetByName('ActivityLog');
+  if (actSheet && actSheet.getLastRow() >= 2) {
+    var actValues = actSheet.getRange(2, 9, actSheet.getLastRow() - 1, 2).getValues();
+    actValues.forEach(function(row) {
+      if (row[0] && row[1]) map[row[0]] = row[1];
+    });
+  }
+
+  // Secondary source: RawData columns I (LaborTypeId) and J (LaborTypeName)
+  var rawSheet = ss.getSheetByName('RawData');
+  if (rawSheet && rawSheet.getLastRow() >= 2) {
+    var rawValues = rawSheet.getRange(2, 9, rawSheet.getLastRow() - 1, 2).getValues();
+    rawValues.forEach(function(row) {
+      if (row[0] && row[1] && !map[row[0]]) map[row[0]] = row[1];
+    });
+  }
+
+  // Write 4 columns to match schema; IsOvertime and OTMultiplier left blank (unknown without API)
+  var rows = Object.keys(map).map(function(id) { return [id, map[id], '', '']; });
   clearSheetData(laborSheet);
   if (rows.length > 0) {
-    laborSheet.getRange(2, 1, rows.length, 2).setValues(rows);
+    laborSheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
   }
 }
 
