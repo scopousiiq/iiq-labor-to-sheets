@@ -48,8 +48,14 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 - **LaborTypes** (4 cols: LaborTypeId, LaborTypeName, IsOvertime, OTMultiplier) — loaded from `GET /v1.0/labor/types` API; `IsOvertime` flag drives automatic overtime detection in IndividualLookup
 - **ByTeam, ByIndividual, ByDepartment, ByLaborType, ByResolution** — formula-driven rollup sheets using LET/BYROW/SUMIFS against ActivityLog, filtered by DateFilters
 - **IndividualLookup** — dropdown to select an individual; shows their activity detail and per-ticket summary for the filtered date range
+- **ByIssueCategory** — hours, cost, entry/ticket count per issue category
+- **ByIssueType** — hours, cost, entry/ticket count per issue type
 - **AgentPivot** (7 cols: Agent, Team, Standard, Travel, Overtime, Weekend, Total Hours) — per-agent pivot with hours by labor type; column headers reference cell values so labor type names are adjustable
 - **ZeroLabor** (8 cols) — closed tickets with zero labor hours in the filtered date range; flags tickets where no time was logged
+- **AgentByCategory** — QUERY-based cross-dimension: agent × issue category (hours, cost, entries)
+- **TeamByCategory** — QUERY-based cross-dimension: team × issue category
+- **CategoryByLaborType** — QUERY-based cross-dimension: issue category × labor type
+- **LocationByCategory** — QUERY-based cross-dimension: location × issue category
 - **YearSummary** — QUERY-based monthly aggregation by group type (Team, Agent, LaborType, Resolution)
 - **Dashboard** — KPI formulas referencing rollup sheets
 - **TicketIndex, ActivityIndex** — hidden index sheets for fast lookups
@@ -80,7 +86,7 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 - **BI-safe values:** `IsClosed` stored as `'Closed'`/`'Open'` (not boolean). `IsPublic` stored as `1`/`0` (not boolean).
 - **Logging:** `logOperation()` inserts newest entries at row 2 (after header), auto-prunes beyond 1000 entries.
 
-## RawData Column Layout (21 columns)
+## RawData Column Layout (25 columns)
 
 | Col | Letter | Header | Source |
 |-----|--------|--------|--------|
@@ -105,8 +111,12 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 | 19 | S | AssignedUserId | `t.AssignedToUserId` |
 | 20 | T | AssignedTeamId | `t.AssignedToTeamId` |
 | 21 | U | LocationId | `t.LocationId` |
+| 22 | V | IssueCategoryId | `t.IssueCategory.IssueCategoryId` |
+| 23 | W | IssueCategoryName | `t.IssueCategory.Name` |
+| 24 | X | IssueTypeId | `t.IssueType.IssueTypeId` |
+| 25 | Y | IssueTypeName | `t.IssueType.Name` |
 
-## ActivityLog Column Layout (20 columns)
+## ActivityLog Column Layout (24 columns)
 
 | Col | Letter | Header | Source |
 |-----|--------|--------|--------|
@@ -130,6 +140,10 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 | 18 | R | TeamName | `userMap` lookup |
 | 19 | S | LocationId | from `ticketMap` |
 | 20 | T | LocationName | from `ticketMap` |
+| 21 | U | IssueCategoryId | from `ticketMap` |
+| 22 | V | IssueCategoryName | from `ticketMap` |
+| 23 | W | IssueTypeId | from `ticketMap` |
+| 24 | X | IssueTypeName | from `ticketMap` |
 
 ## Config Key Reference
 
@@ -180,7 +194,7 @@ Analytics sheets use **ActivityLog** as the data source with **DateFilters** for
 - `BYROW(entities, LAMBDA(e, SUMIFS/COUNTIFS(...)))` for per-entity metrics
 - `HSTACK(...)` to combine columns, `SORT(...)` to order results
 - All formulas reference **Name columns** (not ID columns) for `UNIQUE`/`COUNTIFS`
-- Key column references in formulas: `R` = TeamName, `N` = PerformedByUser, `T` = LocationName, `J` = LaborTypeName, `L` = ResolutionActionName, `F` = EffortHours, `H` = LaborCost, `D` = ActivityDate, `B` = TicketId
+- Key column references in formulas: `R` = TeamName, `N` = PerformedByUser, `T` = LocationName, `J` = LaborTypeName, `L` = ResolutionActionName, `V` = IssueCategoryName, `X` = IssueTypeName, `F` = EffortHours, `H` = LaborCost, `D` = ActivityDate, `B` = TicketId
 
 ## Changelog
 

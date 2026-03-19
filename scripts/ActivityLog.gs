@@ -100,6 +100,8 @@ function loadActivitiesBatch(ticketIds, startPage, actSheet, activityIndex, tick
   let page = startPage || 0;
   const pageSize = getPageSize();
   let hasMore = true;
+  const responseTicketIds = {};
+  const ticketsWithActivities = {};
 
   while (hasMore) {
     if (Date.now() - startTime > MAX_RUNTIME_MS) {
@@ -110,7 +112,7 @@ function loadActivitiesBatch(ticketIds, startPage, actSheet, activityIndex, tick
       const endpoint = '/v1.0/tickets/activities?$p=' + page + '&$s=' + pageSize;
       const response = apiRequest('POST', endpoint, ticketIds);
       const entries = extractActivityEntries(response);
-      const rows = mapActivityEntries(entries, ticketMap, userMap, laborMap, resolutionMap);
+      const rows = mapActivityEntries(entries, ticketMap, userMap, laborMap, resolutionMap, responseTicketIds, ticketsWithActivities);
 
       writeActivities(rows, actSheet, activityIndex);
 
@@ -127,8 +129,28 @@ function loadActivitiesBatch(ticketIds, startPage, actSheet, activityIndex, tick
     }
   }
 
-  ticketIds.forEach(ticketId => clearActivityFailure(ticketId));
+  reconcileBatchTicketFailures(ticketIds, responseTicketIds, ticketsWithActivities, startPage || 0);
   return { completed: true, nextPage: page };
+}
+
+function reconcileBatchTicketFailures(ticketIds, responseTicketIds, ticketsWithActivities, startPage) {
+  const skipMissingTicketFailures = startPage > 0;
+  if (skipMissingTicketFailures) {
+    logOperation('ACTIVITY_LOAD', 'INFO', 'Batch resumed at page ' + startPage + '; skipping missing-ticket failure checks for this run.');
+  }
+
+  ticketIds.forEach(ticketId => {
+    if (responseTicketIds[ticketId]) {
+      clearActivityFailure(ticketId);
+      if (!ticketsWithActivities[ticketId]) {
+        logOperation('ACTIVITY_LOAD', 'WARNING', 'Ticket ' + ticketId + ' returned with zero activities in batch response.');
+      }
+      return;
+    }
+
+    if (skipMissingTicketFailures) return;
+    recordActivityFailure(ticketId, 'No activity response returned in successful batch');
+  });
 }
 
 function loadActivitiesForTicket(ticketId, ticketMap, userMap, laborMap, resolutionMap) {
@@ -140,11 +162,11 @@ function loadActivitiesForTicket(ticketId, ticketMap, userMap, laborMap, resolut
   entries.forEach(entry => {
     const items = entry.ActivityItems || entry.activityItems || [];
     items.forEach(item => {
-      if (!item || !item.Effort) return;
+      if (isEffortMissing(item)) return;
       if (item.$type && item.$type.indexOf('TicketActivityAction') === -1) return;
 
       const row = buildActivityRow(item, entry, ticketId, ticketContext, userMap, laborMap, resolutionMap);
-      if (row[0]) {
+      if (row) {
         rows.push(row);
       }
     });
@@ -169,30 +191,44 @@ function extractActivityEntries(response) {
   return [];
 }
 
-function mapActivityEntries(entries, ticketMap, userMap, laborMap, resolutionMap) {
+function mapActivityEntries(entries, ticketMap, userMap, laborMap, resolutionMap, responseTicketIds, ticketsWithActivities) {
   const rows = [];
 
   entries.forEach(entry => {
     const ticketId = entry.TicketId || entry.ticketId || '';
     if (!ticketId) return;
+    responseTicketIds[ticketId] = true;
     const ticketContext = ticketMap[ticketId] || {};
     const items = entry.ActivityItems || entry.activityItems || [];
+    let hasActivities = false;
 
     items.forEach(item => {
-      if (!item || !item.Effort) return;
+      if (isEffortMissing(item)) return;
       if (item.$type && item.$type.indexOf('TicketActivityAction') === -1) return;
       const row = buildActivityRow(item, entry, ticketId, ticketContext, userMap, laborMap, resolutionMap);
-      if (row[0]) {
+      if (row) {
         rows.push(row);
+        hasActivities = true;
       }
     });
+
+    if (hasActivities) {
+      ticketsWithActivities[ticketId] = true;
+    }
   });
 
   return rows;
 }
 
+function isEffortMissing(item) {
+  return !item || item.Effort === null || item.Effort === undefined;
+}
+
 function buildActivityRow(item, entry, ticketId, ticketContext, userMap, laborMap, resolutionMap) {
-  const activityId = item.TicketActivityActionId || item.TicketActivityId || '';
+  const activityId = normalizeActivityId(item.TicketActivityActionId || item.TicketActivityId);
+  if (!activityId) return null;
+
+  const effortMins = item.Effort === null || item.Effort === undefined ? 0 : item.Effort;
   const userId = item.ByUserId || '';
   const laborTypeId = item.LaborTypeId || '';
   const resolutionId = item.ResolutionActionId || '';
@@ -208,8 +244,8 @@ function buildActivityRow(item, entry, ticketId, ticketContext, userMap, laborMa
     ticketId,
     ticketContext.ticketNumber || '',
     parseApiDate(item.ActivityDate || entry.CreatedDate || ''),
-    item.Effort || 0,
-    item.Effort ? (item.Effort / 60) : 0,
+    effortMins,
+    effortMins / 60,
     item.HourlyRate || 0,
     item.LaborCost || 0,
     laborTypeId,
@@ -223,8 +259,17 @@ function buildActivityRow(item, entry, ticketId, ticketContext, userMap, laborMa
     user.teamId || '',
     user.teamName || '',
     ticketContext.locationId || '',
-    ticketContext.locationName || ''
+    ticketContext.locationName || '',
+    ticketContext.issueCategoryId || '',
+    ticketContext.issueCategoryName || '',
+    ticketContext.issueTypeId || '',
+    ticketContext.issueTypeName || ''
   ];
+}
+
+function normalizeActivityId(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim();
 }
 
 function getTicketIds(rawSheet) {
@@ -248,7 +293,11 @@ function buildTicketContextMap(rawSheet) {
     map[ticketId] = {
       ticketNumber: row[1],
       locationName: row[13],
-      locationId: row[20]
+      locationId: row[20],
+      issueCategoryId: row[21] || '',
+      issueCategoryName: row[22] || '',
+      issueTypeId: row[23] || '',
+      issueTypeName: row[24] || ''
     };
   });
 
@@ -322,7 +371,10 @@ function writeActivities(rows, sheet, indexMap) {
   const updates = {};
 
   rows.forEach(row => {
-    const id = row[0];
+    const id = normalizeActivityId(row[0]);
+    if (!id) return;
+
+    row[0] = id;
     const existingRow = indexMap[id];
     if (existingRow) {
       updates[existingRow] = row;

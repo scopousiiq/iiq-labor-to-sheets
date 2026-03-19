@@ -3,14 +3,32 @@
 ## 2026-03-19
 
 ### Added
-- **AgentPivot sheet** (`Setup.gs`) — Per-agent pivot table with one row per technician and hours broken down by labor type (Standard, Travel, Overtime, Weekend, Total). Column headers reference cell values so districts can rename labor types without editing the formula. Filtered by DateFilters.
+- **IssueCategory + IssueType fields** (`TicketData.gs`, `ActivityLog.gs`, `Setup.gs`) — RawData expanded to 25 columns (V-Y: IssueCategoryId, IssueCategoryName, IssueTypeId, IssueTypeName). ActivityLog expanded to 24 columns (U-X) via `buildTicketContextMap` denormalization. Enables "what kind of work" analysis alongside existing who/where/how dimensions.
+- **ByIssueCategory sheet** (`Setup.gs`) — Rollup: hours, cost, entry/ticket count per issue category. LET/BYROW pattern matching existing rollup sheets.
+- **ByIssueType sheet** (`Setup.gs`) — Rollup: hours, cost, entry/ticket count per issue type.
+- **AgentByCategory sheet** (`Setup.gs`) — Cross-dimension: agent × issue category. QUERY-based with date filtering.
+- **TeamByCategory sheet** (`Setup.gs`) — Cross-dimension: team × issue category.
+- **CategoryByLaborType sheet** (`Setup.gs`) — Cross-dimension: issue category × labor type.
+- **LocationByCategory sheet** (`Setup.gs`) — Cross-dimension: location × issue category.
+- **AgentPivot sheet** (`Setup.gs`) — Per-agent pivot table with one row per technician and hours broken down by labor type (Standard, Travel, Overtime, Weekend, Total). Column headers reference cell values so districts can rename labor types without editing the formula. User-selectable sort via dropdowns. Filtered by DateFilters.
 - **ZeroLabor sheet** (`Setup.gs`) — Lists closed tickets with zero labor hours logged in the filtered date range. Helps managers flag "Work Complete" tickets where no time was entered.
 
 ### Changed
-- **DateFilters expanded** (`Setup.gs`) — Replaced old filter modes (MTD, QTD, YTD, School YTD, Last 7 Days, Last 30 Days) with DeKalb-requested set: This Month, Last Month, This Week, Last Week, This Quarter, Last Quarter, This Calendar Year, Last Calendar Year, This School Year, Last School Year, Manual. Default changed from "School YTD" to "This School Year". Week filters use Monday start (WEEKDAY type 2).
-- **Instructions sheet updated** (`Setup.gs`) — Added AgentPivot and ZeroLabor to sheet reference. Updated date filter documentation to reflect new filter mode names.
-- **Regenerate Analytics** (`Setup.gs`) — `regenerateAnalyticsSheets()` now includes AgentPivot and ZeroLabor. Confirmation dialog lists all sheets.
-- **SHEET_ORDER** (`Setup.gs`) — AgentPivot and ZeroLabor added after IndividualLookup.
+- **DateFilters expanded** (`Setup.gs`) — Replaced old filter modes (MTD, QTD, YTD, School YTD, Last 7 Days, Last 30 Days) with configurable set: This Month, Last Month, This Week, Last Week, This Quarter, Last Quarter, This Calendar Year, Last Calendar Year, This School Year, Last School Year, Manual. Default changed from "School YTD" to "This School Year". Week filters use Monday start (WEEKDAY type 2).
+- **Data sheet headers now self-heal** (`Setup.gs`) — `setupRawDataSheet` and `setupActivityLogSheet` always overwrite header row 1, even when the sheet exists. Ensures new columns appear without needing a Full Reload.
+- **LaborTypes removed from Regenerate Analytics** (`Setup.gs`) — LaborTypes is only created during Complete Setup; Regenerate Analytics no longer deletes and recreates it.
+- **Instructions sheet updated** (`Setup.gs`) — Added all new sheets to sheet reference. Updated date filter documentation to reflect new filter mode names.
+- **SHEET_ORDER** (`Setup.gs`) — All new sheets added in logical groupings.
+
+### Fixed
+- **Activity loader silent data loss** (`ActivityLog.gs`) — `loadActivitiesBatch` previously cleared failure records for ALL ticket IDs on HTTP 200, even if the API returned activities for only some of them. Added `reconcileBatchTicketFailures` that only clears failures for tickets actually present in the response, records failures for missing tickets so they retry, and logs warnings for tickets with zero qualifying activities. Skips missing-ticket failure checks on resumed partial pagination to avoid false positives.
+- **Zero-effort activities dropped** (`ActivityLog.gs`) — `!item.Effort` filter incorrectly skipped entries where `Effort = 0`. Replaced with `isEffortMissing()` that only skips `null`/`undefined` effort, preserving zero-effort entries.
+- **Blank ActivityId phantom duplicates** (`ActivityLog.gs`) — Added `normalizeActivityId()` validation in `buildActivityRow` (returns null for blank IDs) and `writeActivities` (skips blank IDs before dedup/index writes). Prevents accumulation of unindexed duplicate rows.
+- **QUERY-based sheets showing duplicate headers** (`Setup.gs`) — Cross-dimension sheets (AgentByCategory, etc.) had QUERY `label` clause outputting a header row that duplicated the script-written headers. Fixed by using empty label strings.
+- **IssueCategory/IssueType fields empty** (`TicketData.gs`) — Used wrong API field paths (`t.IssueCategory`, `t.IssueType`). Corrected to `t.Issue.IssueCategoryId`, `t.Issue.IssueCategoryName`, `t.Issue.IssueTypeId`, `t.Issue.Name`.
+- **AgentPivot LET variable name collision** (`Setup.gs`) — Variables `c1`–`c4` are cell references in Sheets; LET rejected them. Renamed to `stdH`, `trvH`, `otH`, `wkndH`.
+- **ZeroLabor dates showing serial numbers** (`Setup.gs`) — Wrapped date columns in `TEXT(date,"M/D/YYYY")` inside HSTACK.
+- **reorderSheets crash after regenerate** (`Setup.gs`) — Added `SpreadsheetApp.flush()` before reorder loop to commit pending delete/create operations.
 
 ## 2026-02-23
 

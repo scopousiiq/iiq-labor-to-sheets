@@ -61,8 +61,8 @@ Click **iiQ Data > Setup > Setup Automated Triggers** to create all triggers aut
 
 | Sheet | What It Shows |
 |-------|---------------|
-| `RawData` | All tickets with labor fields (21 columns) |
-| `ActivityLog` | All time entries with labor type, cost, and team info (20 columns) |
+| `RawData` | All tickets with labor fields (25 columns, includes issue category/type) |
+| `ActivityLog` | All time entries with labor type, cost, team, and issue info (24 columns) |
 | `Teams` | Team directory |
 | `Users` | User directory with team assignments |
 | `LaborTypes` | Labor type names with overtime flags |
@@ -77,8 +77,14 @@ Click **iiQ Data > Setup > Setup Automated Triggers** to create all triggers aut
 | `ByDepartment` | Hours, cost, and ticket count per location |
 | `ByLaborType` | Hours, cost, and ticket count per labor type |
 | `ByResolution` | Hours, cost, and ticket count per resolution action |
+| `ByIssueCategory` | Hours, cost, and ticket count per issue category |
+| `ByIssueType` | Hours, cost, and ticket count per issue type |
 | `AgentPivot` | Per-technician hours broken down by labor type — verify 40-hour work weeks |
 | `ZeroLabor` | Closed tickets with zero labor logged — flag for manager review |
+| `AgentByCategory` | Cross-dimension: agent hours broken down by issue category |
+| `TeamByCategory` | Cross-dimension: team hours broken down by issue category |
+| `CategoryByLaborType` | Cross-dimension: issue category hours broken down by labor type |
+| `LocationByCategory` | Cross-dimension: location hours broken down by issue category |
 | `IndividualLookup` | Select a person to see their activity detail and per-ticket summary |
 | `YearSummary` | Monthly aggregation by team, agent, labor type, and resolution |
 | `Dashboard` | KPI summary (total hours, cost, top performer, top team) |

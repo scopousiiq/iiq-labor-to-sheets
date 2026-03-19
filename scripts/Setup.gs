@@ -8,17 +8,33 @@ const RAWDATA_HEADERS = [
   'TicketId', 'TicketNumber', 'Subject', 'CreatedDate', 'ClosedDate',
   'TotalLaborMins', 'TotalLaborHours', 'TotalLaborCost', 'LaborTypeId', 'LaborTypeName',
   'AssignedUser', 'AssignedUserEmail', 'AssignedTeam', 'Location', 'Requester',
-  'Status', 'ResolutionAction', 'IsClosed', 'AssignedUserId', 'AssignedTeamId', 'LocationId'
+  'Status', 'ResolutionAction', 'IsClosed', 'AssignedUserId', 'AssignedTeamId', 'LocationId',
+  'IssueCategoryId', 'IssueCategoryName', 'IssueTypeId', 'IssueTypeName'
 ];
 
 const ACTIVITY_HEADERS = [
   'ActivityId', 'TicketId', 'TicketNumber', 'ActivityDate', 'EffortMins', 'EffortHours',
   'HourlyRate', 'LaborCost', 'LaborTypeId', 'LaborTypeName', 'ResolutionActionId',
   'ResolutionActionName', 'PerformedByUserId', 'PerformedByUser', 'Notes', 'IsPublic',
-  'TeamId', 'TeamName', 'LocationId', 'LocationName'
+  'TeamId', 'TeamName', 'LocationId', 'LocationName',
+  'IssueCategoryId', 'IssueCategoryName', 'IssueTypeId', 'IssueTypeName'
 ];
 
-// --- Helper for idempotent analytics sheet recreation ---
+// --- Helpers ---
+
+var FMT_DECIMAL = '#,##0.00';
+var FMT_INTEGER = '#,##0';
+var FMT_CURRENCY = '$#,##0.00';
+
+// Apply number formats to data columns. `formats` is an array of
+// [colLetter, formatString] pairs. Formats from `dataStartRow` down to 1000.
+function formatSheetColumns(sheet, dataStartRow, formats) {
+  formats.forEach(function(pair) {
+    var col = pair[0];
+    var fmt = pair[1];
+    sheet.getRange(col + dataStartRow + ':' + col).setNumberFormat(fmt);
+  });
+}
 
 function deleteSheetIfExists(ss, name) {
   const existing = ss.getSheetByName(name);
@@ -59,9 +75,15 @@ function setupLaborTrackerDashboard() {
   if (setupByDepartmentSheet(ss)) created.push('ByDepartment'); else skipped.push('ByDepartment');
   if (setupByLaborTypeSheet(ss)) created.push('ByLaborType'); else skipped.push('ByLaborType');
   if (setupByResolutionSheet(ss)) created.push('ByResolution'); else skipped.push('ByResolution');
+  if (setupByIssueCategorySheet(ss)) created.push('ByIssueCategory'); else skipped.push('ByIssueCategory');
+  if (setupByIssueTypeSheet(ss)) created.push('ByIssueType'); else skipped.push('ByIssueType');
   if (setupIndividualLookupSheet(ss)) created.push('IndividualLookup'); else skipped.push('IndividualLookup');
   if (setupAgentPivotSheet(ss)) created.push('AgentPivot'); else skipped.push('AgentPivot');
   if (setupZeroLaborSheet(ss)) created.push('ZeroLabor'); else skipped.push('ZeroLabor');
+  if (setupAgentByCategorySheet(ss)) created.push('AgentByCategory'); else skipped.push('AgentByCategory');
+  if (setupTeamByCategorySheet(ss)) created.push('TeamByCategory'); else skipped.push('TeamByCategory');
+  if (setupCategoryByLaborTypeSheet(ss)) created.push('CategoryByLaborType'); else skipped.push('CategoryByLaborType');
+  if (setupLocationByCategorySheet(ss)) created.push('LocationByCategory'); else skipped.push('LocationByCategory');
   if (setupDashboardSheet(ss)) created.push('Dashboard'); else skipped.push('Dashboard');
   if (setupYearSummarySheet(ss)) created.push('YearSummary'); else skipped.push('YearSummary');
   if (setupLogsSheet(ss)) created.push('Logs'); else skipped.push('Logs');
@@ -87,7 +109,10 @@ var SHEET_ORDER = [
   'RawData', 'ActivityLog',
   'Teams', 'Users', 'LaborTypes', 'ResolutionActions',
   'ByTeam', 'ByIndividual', 'ByDepartment', 'ByLaborType', 'ByResolution',
-  'IndividualLookup', 'AgentPivot', 'ZeroLabor', 'YearSummary', 'Dashboard', 'Logs',
+  'ByIssueCategory', 'ByIssueType',
+  'IndividualLookup', 'AgentPivot', 'ZeroLabor',
+  'AgentByCategory', 'TeamByCategory', 'CategoryByLaborType', 'LocationByCategory',
+  'YearSummary', 'Dashboard', 'Logs',
   // Hidden / internal (end of tab bar)
   'TicketIndex', 'ActivityIndex', 'ActivityFailures'
 ];
@@ -192,7 +217,7 @@ function setupInstructionsSheet(ss) {
   writePairBold('Sheet', 'Description');
   writePair('Instructions', 'This sheet — setup guide and reference');
   writePair('Config', 'All settings, credentials, and load state (key-value pairs)');
-  writePair('DateFilters', 'Date range selector for analytics (MTD, QTD, YTD, School YTD, etc.)');
+  writePair('DateFilters', 'Date range selector for analytics (This/Last Month, Week, Quarter, etc.)');
   writePair('RawData', 'All tickets with labor fields (' + RAWDATA_HEADERS.length + ' columns)');
   writePair('ActivityLog', 'All resolution action time entries (' + ACTIVITY_HEADERS.length + ' columns) — primary source for rollups');
   writePair('Teams', 'Reference: team names and IDs');
@@ -204,9 +229,15 @@ function setupInstructionsSheet(ss) {
   writePair('ByDepartment', 'Rollup: hours, cost, entry count per location/department');
   writePair('ByLaborType', 'Rollup: hours, cost, entry count per labor type');
   writePair('ByResolution', 'Rollup: hours, cost, entry count per resolution action');
+  writePair('ByIssueCategory', 'Rollup: hours, cost, entry count per issue category');
+  writePair('ByIssueType', 'Rollup: hours, cost, entry count per issue type');
   writePair('IndividualLookup', 'Select an individual to see their tickets and activity detail');
   writePair('AgentPivot', 'Per-agent hours broken down by labor type (Standard, Travel, Overtime, Weekend)');
   writePair('ZeroLabor', 'Closed tickets with zero labor hours logged (flag for review)');
+  writePair('AgentByCategory', 'Cross-dimension: hours per agent broken down by issue category');
+  writePair('TeamByCategory', 'Cross-dimension: hours per team broken down by issue category');
+  writePair('CategoryByLaborType', 'Cross-dimension: hours per issue category broken down by labor type');
+  writePair('LocationByCategory', 'Cross-dimension: hours per location broken down by issue category');
   writePair('YearSummary', 'Monthly aggregation by team, agent, labor type, and resolution');
   writePair('Dashboard', 'KPI summary referencing the rollup sheets');
   writePair('Logs', 'Operation log (newest first, auto-trimmed to 1000 rows)');
@@ -445,21 +476,29 @@ function setupDateFiltersSheet(ss) {
 }
 
 function setupRawDataSheet(ss) {
-  if (ss.getSheetByName('RawData')) return false;
-
-  const sheet = ss.insertSheet('RawData');
+  var existed = true;
+  var sheet = ss.getSheetByName('RawData');
+  if (!sheet) {
+    sheet = ss.insertSheet('RawData');
+    existed = false;
+  }
+  // Always ensure headers are current (columns may have been added)
   sheet.getRange(1, 1, 1, RAWDATA_HEADERS.length).setValues([RAWDATA_HEADERS]);
   sheet.getRange(1, 1, 1, RAWDATA_HEADERS.length).setFontWeight('bold');
-  return true;
+  return !existed;
 }
 
 function setupActivityLogSheet(ss) {
-  if (ss.getSheetByName('ActivityLog')) return false;
-
-  const sheet = ss.insertSheet('ActivityLog');
+  var existed = true;
+  var sheet = ss.getSheetByName('ActivityLog');
+  if (!sheet) {
+    sheet = ss.insertSheet('ActivityLog');
+    existed = false;
+  }
+  // Always ensure headers are current (columns may have been added)
   sheet.getRange(1, 1, 1, ACTIVITY_HEADERS.length).setValues([ACTIVITY_HEADERS]);
   sheet.getRange(1, 1, 1, ACTIVITY_HEADERS.length).setFontWeight('bold');
-  return true;
+  return !existed;
 }
 
 function setupTeamsSheet(ss) {
@@ -518,6 +557,7 @@ function setupByTeamSheet(ss) {
     ')';
 
   sheet.getRange(2, 1).setFormula(formula);
+  formatSheetColumns(sheet, 2, [['B', FMT_DECIMAL], ['C', FMT_CURRENCY], ['D', FMT_INTEGER], ['E', FMT_INTEGER], ['F', FMT_DECIMAL]]);
   return true;
 }
 
@@ -542,6 +582,7 @@ function setupByIndividualSheet(ss) {
     ')';
 
   sheet.getRange(2, 1).setFormula(formula);
+  formatSheetColumns(sheet, 2, [['C', FMT_DECIMAL], ['D', FMT_CURRENCY], ['E', FMT_INTEGER], ['F', FMT_INTEGER], ['G', FMT_DECIMAL]]);
   return true;
 }
 
@@ -565,6 +606,7 @@ function setupByDepartmentSheet(ss) {
     ')';
 
   sheet.getRange(2, 1).setFormula(formula);
+  formatSheetColumns(sheet, 2, [['B', FMT_DECIMAL], ['C', FMT_CURRENCY], ['D', FMT_INTEGER], ['E', FMT_INTEGER], ['F', FMT_DECIMAL]]);
   return true;
 }
 
@@ -588,6 +630,7 @@ function setupByLaborTypeSheet(ss) {
     ')';
 
   sheet.getRange(2, 1).setFormula(formula);
+  formatSheetColumns(sheet, 2, [['B', FMT_DECIMAL], ['C', FMT_CURRENCY], ['D', FMT_INTEGER], ['E', FMT_INTEGER], ['F', FMT_DECIMAL]]);
   return true;
 }
 
@@ -764,6 +807,161 @@ function setupByResolutionSheet(ss) {
     ')';
 
   sheet.getRange(2, 1).setFormula(formula);
+  formatSheetColumns(sheet, 2, [['B', FMT_DECIMAL], ['C', FMT_CURRENCY], ['D', FMT_INTEGER], ['E', FMT_INTEGER], ['F', FMT_DECIMAL]]);
+  return true;
+}
+
+function setupByIssueCategorySheet(ss) {
+  deleteSheetIfExists(ss, 'ByIssueCategory');
+  const sheet = ss.insertSheet('ByIssueCategory');
+  const headers = ['Issue Category', 'Total Hours', 'Total Cost', 'Entry Count', 'Ticket Count', 'Avg Hours/Ticket'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+
+  const formula = '=LET(' +
+    'startD,DateFilters!$B$5,' +
+    'endD,DateFilters!$B$6,' +
+    'cats,UNIQUE(FILTER(ActivityLog!V2:V,ActivityLog!V2:V<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
+    'hours,BYROW(cats,LAMBDA(c,SUMIFS(ActivityLog!F:F,ActivityLog!V:V,c,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'cost,BYROW(cats,LAMBDA(c,SUMIFS(ActivityLog!H:H,ActivityLog!V:V,c,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'entries,BYROW(cats,LAMBDA(c,COUNTIFS(ActivityLog!V:V,c,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'tickets,BYROW(cats,LAMBDA(c,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!V2:V=c,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
+    'avg,MAP(hours,tickets,LAMBDA(h,t,IF(t>0,h/t,0))),' +
+    'SORT(IFERROR(HSTACK(cats,hours,cost,entries,tickets,avg),0),2,FALSE)' +
+    ')';
+
+  sheet.getRange(2, 1).setFormula(formula);
+  sheet.setColumnWidth(1, 250);
+  formatSheetColumns(sheet, 2, [['B', FMT_DECIMAL], ['C', FMT_CURRENCY], ['D', FMT_INTEGER], ['E', FMT_INTEGER], ['F', FMT_DECIMAL]]);
+  return true;
+}
+
+function setupByIssueTypeSheet(ss) {
+  deleteSheetIfExists(ss, 'ByIssueType');
+  const sheet = ss.insertSheet('ByIssueType');
+  const headers = ['Issue Type', 'Total Hours', 'Total Cost', 'Entry Count', 'Ticket Count', 'Avg Hours/Ticket'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+
+  const formula = '=LET(' +
+    'startD,DateFilters!$B$5,' +
+    'endD,DateFilters!$B$6,' +
+    'types,UNIQUE(FILTER(ActivityLog!X2:X,ActivityLog!X2:X<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
+    'hours,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!F:F,ActivityLog!X:X,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'cost,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!H:H,ActivityLog!X:X,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'entries,BYROW(types,LAMBDA(t,COUNTIFS(ActivityLog!X:X,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'tickets,BYROW(types,LAMBDA(t,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!X2:X=t,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
+    'avg,MAP(hours,tickets,LAMBDA(h,t,IF(t>0,h/t,0))),' +
+    'SORT(IFERROR(HSTACK(types,hours,cost,entries,tickets,avg),0),2,FALSE)' +
+    ')';
+
+  sheet.getRange(2, 1).setFormula(formula);
+  sheet.setColumnWidth(1, 250);
+  formatSheetColumns(sheet, 2, [['B', FMT_DECIMAL], ['C', FMT_CURRENCY], ['D', FMT_INTEGER], ['E', FMT_INTEGER], ['F', FMT_DECIMAL]]);
+  return true;
+}
+
+// --- Cross-dimension sheets (QUERY-based) ---
+// These use QUERY's GROUP BY for multi-column pivots, with date filtering
+// via date literal syntax (same pattern as YearSummary).
+
+function buildDateClause_() {
+  return '" Col4>=date \'"&TEXT(startD,"yyyy-MM-dd")&"\' and Col4<=date \'"&TEXT(endD,"yyyy-MM-dd")&"\'"';
+}
+
+function setupAgentByCategorySheet(ss) {
+  deleteSheetIfExists(ss, 'AgentByCategory');
+  const sheet = ss.insertSheet('AgentByCategory');
+  const headers = ['Agent', 'Issue Category', 'Hours', 'Cost', 'Entries'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+
+  // Col14=PerformedByUser(N), Col22=IssueCategoryName(V), Col6=EffortHours(F), Col8=LaborCost(H), Col1=ActivityId(A)
+  const formula = '=IFERROR(LET(' +
+    'startD,DateFilters!$B$5,' +
+    'endD,DateFilters!$B$6,' +
+    'dateClause,' + buildDateClause_() + ',' +
+    'QUERY(ActivityLog!A2:X,' +
+    '"select Col14,Col22,sum(Col6),sum(Col8),count(Col1) where Col14 is not null and Col22 is not null and"&dateClause&' +
+    '" group by Col14,Col22 order by Col14,sum(Col6) desc label sum(Col6) \'\',sum(Col8) \'\',count(Col1) \'\'"' +
+    ',0)),"No data found for the selected date range.")';
+
+  sheet.getRange(2, 1).setFormula(formula);
+  sheet.setColumnWidth(1, 200);
+  sheet.setColumnWidth(2, 250);
+  formatSheetColumns(sheet, 2, [['C', FMT_DECIMAL], ['D', FMT_CURRENCY], ['E', FMT_INTEGER]]);
+  return true;
+}
+
+function setupTeamByCategorySheet(ss) {
+  deleteSheetIfExists(ss, 'TeamByCategory');
+  const sheet = ss.insertSheet('TeamByCategory');
+  const headers = ['Team', 'Issue Category', 'Hours', 'Cost', 'Entries'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+
+  // Col18=TeamName(R), Col22=IssueCategoryName(V)
+  const formula = '=IFERROR(LET(' +
+    'startD,DateFilters!$B$5,' +
+    'endD,DateFilters!$B$6,' +
+    'dateClause,' + buildDateClause_() + ',' +
+    'QUERY(ActivityLog!A2:X,' +
+    '"select Col18,Col22,sum(Col6),sum(Col8),count(Col1) where Col18 is not null and Col22 is not null and"&dateClause&' +
+    '" group by Col18,Col22 order by Col18,sum(Col6) desc label sum(Col6) \'\',sum(Col8) \'\',count(Col1) \'\'"' +
+    ',0)),"No data found for the selected date range.")';
+
+  sheet.getRange(2, 1).setFormula(formula);
+  sheet.setColumnWidth(1, 200);
+  sheet.setColumnWidth(2, 250);
+  formatSheetColumns(sheet, 2, [['C', FMT_DECIMAL], ['D', FMT_CURRENCY], ['E', FMT_INTEGER]]);
+  return true;
+}
+
+function setupCategoryByLaborTypeSheet(ss) {
+  deleteSheetIfExists(ss, 'CategoryByLaborType');
+  const sheet = ss.insertSheet('CategoryByLaborType');
+  const headers = ['Issue Category', 'Labor Type', 'Hours', 'Cost', 'Entries'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+
+  // Col22=IssueCategoryName(V), Col10=LaborTypeName(J)
+  const formula = '=IFERROR(LET(' +
+    'startD,DateFilters!$B$5,' +
+    'endD,DateFilters!$B$6,' +
+    'dateClause,' + buildDateClause_() + ',' +
+    'QUERY(ActivityLog!A2:X,' +
+    '"select Col22,Col10,sum(Col6),sum(Col8),count(Col1) where Col22 is not null and Col10 is not null and"&dateClause&' +
+    '" group by Col22,Col10 order by Col22,sum(Col6) desc label sum(Col6) \'\',sum(Col8) \'\',count(Col1) \'\'"' +
+    ',0)),"No data found for the selected date range.")';
+
+  sheet.getRange(2, 1).setFormula(formula);
+  sheet.setColumnWidth(1, 250);
+  sheet.setColumnWidth(2, 200);
+  formatSheetColumns(sheet, 2, [['C', FMT_DECIMAL], ['D', FMT_CURRENCY], ['E', FMT_INTEGER]]);
+  return true;
+}
+
+function setupLocationByCategorySheet(ss) {
+  deleteSheetIfExists(ss, 'LocationByCategory');
+  const sheet = ss.insertSheet('LocationByCategory');
+  const headers = ['Location', 'Issue Category', 'Hours', 'Cost', 'Entries'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+
+  // Col20=LocationName(T), Col22=IssueCategoryName(V)
+  const formula = '=IFERROR(LET(' +
+    'startD,DateFilters!$B$5,' +
+    'endD,DateFilters!$B$6,' +
+    'dateClause,' + buildDateClause_() + ',' +
+    'QUERY(ActivityLog!A2:X,' +
+    '"select Col20,Col22,sum(Col6),sum(Col8),count(Col1) where Col20 is not null and Col22 is not null and"&dateClause&' +
+    '" group by Col20,Col22 order by Col20,sum(Col6) desc label sum(Col6) \'\',sum(Col8) \'\',count(Col1) \'\'"' +
+    ',0)),"No data found for the selected date range.")';
+
+  sheet.getRange(2, 1).setFormula(formula);
+  sheet.setColumnWidth(1, 200);
+  sheet.setColumnWidth(2, 250);
+  formatSheetColumns(sheet, 2, [['C', FMT_DECIMAL], ['D', FMT_CURRENCY], ['E', FMT_INTEGER]]);
   return true;
 }
 
@@ -819,6 +1017,7 @@ function setupAgentPivotSheet(ss) {
   sheet.setColumnWidth(1, 200);
   sheet.setColumnWidth(2, 180);
   sheet.setFrozenRows(2);
+  formatSheetColumns(sheet, 3, [['C', FMT_DECIMAL], ['D', FMT_DECIMAL], ['E', FMT_DECIMAL], ['F', FMT_DECIMAL], ['G', FMT_DECIMAL]]);
   return true;
 }
 
@@ -878,6 +1077,11 @@ function setupDashboardSheet(ss) {
   sheet.getRange('B7').setFormula('=IFERROR(INDEX(SORT(ByIndividual!A2:G,3,FALSE),1,1),"")');
   sheet.getRange('B8').setFormula('=IFERROR(INDEX(SORT(ByTeam!A2:F,2,FALSE),1,1),"")');
 
+  sheet.getRange('B3').setNumberFormat(FMT_DECIMAL);
+  sheet.getRange('B4').setNumberFormat(FMT_CURRENCY);
+  sheet.getRange('B5').setNumberFormat(FMT_INTEGER);
+  sheet.getRange('B6').setNumberFormat(FMT_DECIMAL);
+
   sheet.setColumnWidths(1, 2, 220);
   return true;
 }
@@ -926,6 +1130,7 @@ function setupYearSummarySheet(ss) {
     '),"No activity data found for the school year.")';
 
   sheet.getRange(2, 1).setFormula(formula);
+  formatSheetColumns(sheet, 2, [['E', FMT_DECIMAL], ['F', FMT_CURRENCY], ['G', FMT_INTEGER]]);
   return true;
 }
 
@@ -972,16 +1177,21 @@ function setupActivityIndexSheet(ss) {
 
 function regenerateAnalyticsSheets() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  setupLaborTypesSheet(ss);
   setupDateFiltersSheet(ss);
   setupByTeamSheet(ss);
   setupByIndividualSheet(ss);
   setupByDepartmentSheet(ss);
   setupByLaborTypeSheet(ss);
   setupByResolutionSheet(ss);
+  setupByIssueCategorySheet(ss);
+  setupByIssueTypeSheet(ss);
   setupIndividualLookupSheet(ss);
   setupAgentPivotSheet(ss);
   setupZeroLaborSheet(ss);
+  setupAgentByCategorySheet(ss);
+  setupTeamByCategorySheet(ss);
+  setupCategoryByLaborTypeSheet(ss);
+  setupLocationByCategorySheet(ss);
   setupDashboardSheet(ss);
   setupYearSummarySheet(ss);
   reorderSheets(ss);
@@ -993,8 +1203,8 @@ function regenerateAnalyticsSheetsWithConfirm() {
   const response = ui.alert(
     'Regenerate Analytics Sheets',
     'This will delete and recreate all formula-driven analytics sheets ' +
-    '(LaborTypes, DateFilters, ByTeam, ByIndividual, ByDepartment, ByLaborType, ByResolution, IndividualLookup, AgentPivot, ZeroLabor, Dashboard, YearSummary).\n\n' +
-    'Data sheets (RawData, ActivityLog, etc.) will NOT be affected.\nLaborTypes will be recreated with updated headers (run Refresh Labor Types to repopulate).\n\nContinue?',
+    '(LaborTypes, DateFilters, all By* rollups, IndividualLookup, AgentPivot, ZeroLabor, cross-dimension sheets, Dashboard, YearSummary).\n\n' +
+    'Data sheets (RawData, ActivityLog, LaborTypes, etc.) will NOT be affected.\n\nContinue?',
     ui.ButtonSet.YES_NO
   );
   if (response !== ui.Button.YES) return;

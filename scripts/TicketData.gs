@@ -237,7 +237,11 @@ function mapTicketRow(t) {
     t.IsClosed === true ? 'Closed' : 'Open',
     t.AssignedToUserId || '',
     t.AssignedToTeamId || '',
-    t.LocationId || ''
+    t.LocationId || '',
+    t.Issue ? t.Issue.IssueCategoryId || '' : '',
+    t.Issue ? t.Issue.IssueCategoryName || '' : '',
+    t.Issue ? t.Issue.IssueTypeId || '' : '',
+    t.Issue ? t.Issue.Name || '' : ''
   ];
 }
 
