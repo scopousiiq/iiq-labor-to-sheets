@@ -26,7 +26,7 @@ function loadActivitiesInitial() {
   const resolutionMap = buildResolutionActionMap();
 
   const activityIndex = buildActivityIndexMap(actSheet);
-  const batchSize = getPageSize();
+  const batchSize = getActivityBatchSize();
 
   // Retry failed tickets first
   if (!processFailedActivityTickets(startTime, actSheet, activityIndex, ticketMap, userMap, laborMap, resolutionMap)) {
@@ -39,23 +39,39 @@ function loadActivitiesInitial() {
   let startPage = getIntValue(getConfig('ACTIVITY_BATCH_PAGE'), 0);
   if (startPage < 0) startPage = 0;
 
+  var totalBatches = Math.ceil(ticketIds.length / batchSize);
+
   for (let i = index; i < ticketIds.length; i += batchSize) {
     if (Date.now() - startTime > MAX_RUNTIME_MS) {
       writeConfigValueDirect('ACTIVITY_TICKET_INDEX', String(i));
-      logOperation('ACTIVITY_LOAD', 'INFO', 'Paused at batch starting ' + i + ' of ' + ticketIds.length);
+      var batchNum = Math.floor(i / batchSize) + 1;
+      logOperation('ACTIVITY_LOAD', 'INFO',
+        'Paused — processed ' + i + '/' + ticketIds.length + ' tickets (' +
+        batchNum + '/' + totalBatches + ' batches). Will resume on next trigger.');
       return;
     }
 
     const batchIds = ticketIds.slice(i, i + batchSize);
+    const batchEnd = Math.min(i + batchSize, ticketIds.length);
+    const batchLabel = 'tickets ' + (i + 1) + '-' + batchEnd + ' of ' + ticketIds.length;
     const pageStart = i === index ? startPage : 0;
+
+    logOperation('ACTIVITY_LOAD', 'INFO',
+      'Fetching activities for ' + batchLabel +
+      (pageStart > 0 ? ' (resuming at activity page ' + pageStart + ')' : ''));
 
     const result = loadActivitiesBatch(batchIds, pageStart, actSheet, activityIndex, ticketMap, userMap, laborMap, resolutionMap, startTime);
     if (!result.completed) {
       writeConfigValueDirect('ACTIVITY_TICKET_INDEX', String(i));
       writeConfigValueDirect('ACTIVITY_BATCH_PAGE', String(result.nextPage));
-      logOperation('ACTIVITY_LOAD', 'INFO', 'Paused at batch ' + i + ' page ' + result.nextPage);
+      logOperation('ACTIVITY_LOAD', 'INFO',
+        'Paused mid-batch at ' + batchLabel + ', activity page ' + result.nextPage +
+        '. Will resume on next trigger.');
       return;
     }
+
+    logOperation('ACTIVITY_LOAD', 'INFO',
+      'Completed ' + batchLabel + ' — ' + result.activitiesWritten + ' activities written');
 
     writeConfigValueDirect('ACTIVITY_LAST_TICKET_ID', String(batchIds[batchIds.length - 1]));
     writeConfigValueDirect('ACTIVITY_TICKET_INDEX', String(i + batchSize));
@@ -71,6 +87,13 @@ function loadActivitiesInitial() {
   setLoadState(DATA_LOAD_TYPES.ACTIVITIES, LOAD_STATES.COMPLETE);
   writeConfigValueDirect('ACTIVITY_TICKET_INDEX', '');
   updateLastSync();
+
+  // Run post-load validation and trigger reconcile if needed
+  try {
+    validateAndTriggerReconcile();
+  } catch (e) {
+    logOperation('VALIDATION', 'ERROR', 'Post-load validation failed: ' + e.message);
+  }
 }
 
 function refreshActivitiesForTickets(ticketIds) {
@@ -88,7 +111,7 @@ function refreshActivitiesForTickets(ticketIds) {
   const laborMap = buildLaborTypeMap();
   const resolutionMap = buildResolutionActionMap();
   const activityIndex = buildActivityIndexMap(actSheet);
-  const batchSize = getPageSize();
+  const batchSize = getActivityBatchSize();
 
   for (let i = 0; i < ticketIds.length; i += batchSize) {
     const batchIds = ticketIds.slice(i, i + batchSize);
@@ -100,12 +123,13 @@ function loadActivitiesBatch(ticketIds, startPage, actSheet, activityIndex, tick
   let page = startPage || 0;
   const pageSize = getPageSize();
   let hasMore = true;
+  let activitiesWritten = 0;
   const responseTicketIds = {};
   const ticketsWithActivities = {};
 
   while (hasMore) {
     if (Date.now() - startTime > MAX_RUNTIME_MS) {
-      return { completed: false, nextPage: page };
+      return { completed: false, nextPage: page, activitiesWritten: activitiesWritten };
     }
 
     try {
@@ -115,6 +139,7 @@ function loadActivitiesBatch(ticketIds, startPage, actSheet, activityIndex, tick
       const rows = mapActivityEntries(entries, ticketMap, userMap, laborMap, resolutionMap, responseTicketIds, ticketsWithActivities);
 
       writeActivities(rows, actSheet, activityIndex);
+      activitiesWritten += rows.length;
 
       if (response && response.Paging && response.Paging.PageCount !== undefined) {
         page += 1;
@@ -125,12 +150,12 @@ function loadActivitiesBatch(ticketIds, startPage, actSheet, activityIndex, tick
       }
     } catch (error) {
       ticketIds.forEach(ticketId => recordActivityFailure(ticketId, error.message));
-      return { completed: false, nextPage: page };
+      return { completed: false, nextPage: page, activitiesWritten: activitiesWritten };
     }
   }
 
   reconcileBatchTicketFailures(ticketIds, responseTicketIds, ticketsWithActivities, startPage || 0);
-  return { completed: true, nextPage: page };
+  return { completed: true, nextPage: page, activitiesWritten: activitiesWritten };
 }
 
 function reconcileBatchTicketFailures(ticketIds, responseTicketIds, ticketsWithActivities, startPage) {
@@ -139,18 +164,31 @@ function reconcileBatchTicketFailures(ticketIds, responseTicketIds, ticketsWithA
     logOperation('ACTIVITY_LOAD', 'INFO', 'Batch resumed at page ' + startPage + '; skipping missing-ticket failure checks for this run.');
   }
 
+  var zeroActivityCount = 0;
+  var missingFromResponseCount = 0;
+
   ticketIds.forEach(ticketId => {
     if (responseTicketIds[ticketId]) {
       clearActivityFailure(ticketId);
       if (!ticketsWithActivities[ticketId]) {
-        logOperation('ACTIVITY_LOAD', 'WARNING', 'Ticket ' + ticketId + ' returned with zero activities in batch response.');
+        zeroActivityCount++;
       }
       return;
     }
 
     if (skipMissingTicketFailures) return;
+    missingFromResponseCount++;
     recordActivityFailure(ticketId, 'No activity response returned in successful batch');
   });
+
+  if (zeroActivityCount > 0) {
+    logOperation('ACTIVITY_LOAD', 'INFO',
+      zeroActivityCount + ' of ' + ticketIds.length + ' tickets had zero activities in batch response.');
+  }
+  if (missingFromResponseCount > 0) {
+    logOperation('ACTIVITY_LOAD', 'WARNING',
+      missingFromResponseCount + ' of ' + ticketIds.length + ' tickets missing from batch response. Recorded as failures.');
+  }
 }
 
 function loadActivitiesForTicket(ticketId, ticketMap, userMap, laborMap, resolutionMap) {
@@ -387,6 +425,9 @@ function writeActivities(rows, sheet, indexMap) {
   writeBatchedUpdates(sheet, updates);
 
   if (toAppend.length > 0) {
+    // Flush pending writes before appending to ensure getLastRow() is accurate
+    // and to reduce transient "Service Spreadsheets failed" errors.
+    SpreadsheetApp.flush();
     const startRow = sheet.getLastRow() + 1;
     sheet.getRange(startRow, 1, toAppend.length, toAppend[0].length).setValues(toAppend);
     const indexSheet = getActivityIndexSheet();
@@ -463,7 +504,7 @@ function processFailedActivityTickets(startTime, actSheet, activityIndex, ticket
   const failedIds = Object.keys(failures);
   if (failedIds.length === 0) return true;
 
-  const batchSize = getPageSize();
+  const batchSize = getActivityBatchSize();
   for (let i = 0; i < failedIds.length; i += batchSize) {
     if (Date.now() - startTime > MAX_RUNTIME_MS) {
       return false;

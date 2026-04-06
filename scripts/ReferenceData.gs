@@ -93,7 +93,17 @@ function loadUsers() {
     var row = teamRows[teamIndex];
     var teamId = row[0];
     var teamName = row[1];
-    var members = fetchAllPagesWithQueryParams('/v1.0/teams/' + teamId + '/members', null, 'GET');
+
+    var members;
+    try {
+      members = fetchAllPagesWithQueryParams('/v1.0/teams/' + teamId + '/members', null, 'GET');
+    } catch (e) {
+      logOperation('REF_USERS', 'WARNING',
+        'Skipping team ' + teamName + ' (' + teamId + '): ' + e.message);
+      teamIndex++;
+      writeConfigValueDirect('USER_LOAD_TEAM_INDEX', String(teamIndex));
+      continue;
+    }
 
     if (members.length > 0) {
       var userRows = members.map(function(member) {

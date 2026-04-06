@@ -18,8 +18,12 @@ function loadTicketsPaginated() {
   let page = getIntValue(getConfig('TICKET_LOAD_PAGE'), 0);
   if (page < 0) page = 0;
 
+  // Track TotalRows across pages for drift detection
+  let firstTotalRows = getIntValue(getConfigValueDirect('TICKET_LOAD_FIRST_TOTAL_ROWS'), -1);
+  let lastTotalRows = firstTotalRows;
+
   const range = getSchoolYearRange();
-  const filters = buildTicketFilters(range.startDate, range.endDate);
+  const filters = buildTicketFilters(range.startDate, range.endDate, true);
 
   while (true) {
     if (Date.now() - startTime >= MAX_RUNTIME_MS) {
@@ -30,12 +34,19 @@ function loadTicketsPaginated() {
     const response = searchTicketsPage(filters, page, pageSize);
     const items = response && response.Items ? response.Items : [];
 
+    // Track TotalRows from every API response
+    if (response && response.Paging && response.Paging.TotalRows !== undefined) {
+      const currentTotalRows = response.Paging.TotalRows;
+      if (firstTotalRows < 0) {
+        firstTotalRows = currentTotalRows;
+        writeConfigValueDirect('TICKET_LOAD_FIRST_TOTAL_ROWS', String(firstTotalRows));
+      }
+      lastTotalRows = currentTotalRows;
+      writeConfigValueDirect('TICKET_LOAD_EXPECTED_COUNT', String(lastTotalRows));
+    }
+
     if (items.length === 0) {
-      rebuildTicketIndex(sheet);
-      setLoadState(DATA_LOAD_TYPES.TICKETS, LOAD_STATES.COMPLETE);
-      writeConfigValueDirect('TICKET_LOAD_PAGE', '');
-      writeConfigValueDirect('TICKET_LOAD_TOTAL_PAGES',
-        response && response.Paging ? String(response.Paging.PageCount) : '');
+      finalizeTicketLoad_(sheet, response, firstTotalRows, lastTotalRows);
       return;
     }
 
@@ -47,13 +58,33 @@ function loadTicketsPaginated() {
     if (response && response.Paging && response.Paging.PageCount !== undefined) {
       writeConfigValueDirect('TICKET_LOAD_TOTAL_PAGES', String(response.Paging.PageCount));
       if (page >= response.Paging.PageCount) {
-        rebuildTicketIndex(sheet);
-        setLoadState(DATA_LOAD_TYPES.TICKETS, LOAD_STATES.COMPLETE);
-        writeConfigValueDirect('TICKET_LOAD_PAGE', '');
+        finalizeTicketLoad_(sheet, response, firstTotalRows, lastTotalRows);
         return;
       }
     }
   }
+}
+
+function finalizeTicketLoad_(sheet, response, firstTotalRows, lastTotalRows) {
+  rebuildTicketIndex(sheet);
+  setLoadState(DATA_LOAD_TYPES.TICKETS, LOAD_STATES.COMPLETE);
+  writeConfigValueDirect('TICKET_LOAD_PAGE', '');
+  writeConfigValueDirect('TICKET_LOAD_TOTAL_PAGES',
+    response && response.Paging ? String(response.Paging.PageCount) : '');
+
+  // Log drift if TotalRows changed during the load
+  if (firstTotalRows >= 0 && lastTotalRows >= 0 && firstTotalRows !== lastTotalRows) {
+    const drift = lastTotalRows - firstTotalRows;
+    writeConfigValueDirect('TICKET_LOAD_TOTAL_ROWS_DRIFT', String(drift));
+    logOperation('TICKET_LOAD', 'WARNING',
+      'TotalRows drift detected during load: first=' + firstTotalRows +
+      ', last=' + lastTotalRows + ', drift=' + drift);
+  } else {
+    writeConfigValueDirect('TICKET_LOAD_TOTAL_ROWS_DRIFT', '');
+  }
+
+  logOperation('TICKET_LOAD', 'SUCCESS',
+    'Ticket load complete. Expected count: ' + lastTotalRows);
 }
 
 function refreshOpenTickets() {
@@ -171,19 +202,25 @@ function searchTicketsPage(filters, page, pageSize) {
   return apiRequest('POST', endpoint, payload);
 }
 
-function buildTicketFilters(startDate, endDate) {
-  return [
-    {
-      Facet: 'totallabortime',
-      Value: 'numoperator:greaterthan:0',
-      Negative: false
-    },
+function buildTicketFilters(startDate, endDate, includePreSy) {
+  var dateRange = 'daterange:' + formatDateForApi(startDate) + '-' + formatDateForApi(endDate);
+  var filters = [
     {
       Facet: 'createddate',
-      Value: 'daterange:' + formatDateForApi(startDate) + '-' + formatDateForApi(endDate),
+      Value: dateRange,
       Negative: false
     }
   ];
+  if (includePreSy) {
+    filters[0].GroupIndex = 0;
+    filters.push({
+      Facet: 'modifieddate',
+      Value: dateRange,
+      Negative: false,
+      GroupIndex: 1
+    });
+  }
+  return filters;
 }
 
 function buildOpenTicketFilters(startDate, endDate, cutoffDate) {

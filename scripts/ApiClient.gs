@@ -41,7 +41,22 @@ function apiRequest(method, endpoint, payload, retryCount) {
     if (code >= 200 && code < 300) {
       logOperation('API_REQUEST', 'SUCCESS', method + ' ' + endpoint + ' -> ' + code + ' (' + fetchMs + 'ms)');
       if (body && body.trim()) {
-        return JSON.parse(body);
+        try {
+          return JSON.parse(body);
+        } catch (parseError) {
+          // Response likely truncated — retry with backoff if attempts remain
+          if (retryCount < MAX_RETRIES) {
+            var backoffMs = BASE_BACKOFF_MS * Math.pow(2, retryCount) + Math.floor(Math.random() * 250);
+            logOperation('API_REQUEST', 'PARSE_RETRY',
+              method + ' ' + endpoint + ' -> ' + code + ' body truncated (' +
+              body.length + ' bytes). Retry in ' + backoffMs + 'ms');
+            Utilities.sleep(backoffMs);
+            return apiRequest(method, endpoint, payload, retryCount + 1);
+          }
+          logOperation('API_REQUEST', 'ERROR',
+            method + ' ' + endpoint + ' -> JSON parse failed after retries: ' + parseError.message);
+          throw parseError;
+        }
       }
       return null;
     }

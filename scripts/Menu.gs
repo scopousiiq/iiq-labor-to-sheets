@@ -25,6 +25,7 @@ function onOpen() {
       .addItem('Refresh Labor Types', 'menuRefreshLaborTypes')
       .addItem('Open Ticket Refresh', 'startOpenRefresh'))
     .addSubMenu(ui.createMenu('Troubleshooting')
+      .addItem('Validate Data', 'showValidationResults')
       .addItem('View Logs', 'showLogs')
       .addItem('Reset Load States', 'resetLoadStatesWithConfirm')
       .addItem('Full Reload (Clear Data)', 'startFullReloadWithConfirm'))
@@ -182,4 +183,9 @@ function resetLoadStates() {
   setConfig('OPEN_REFRESH_STAGE', '');
   setConfig('OPEN_REFRESH_OPEN_PAGE', '');
   setConfig('OPEN_REFRESH_CLOSED_PAGE', '');
+  setConfig('TICKET_LOAD_EXPECTED_COUNT', '');
+  setConfig('TICKET_LOAD_FIRST_TOTAL_ROWS', '');
+  setConfig('TICKET_LOAD_TOTAL_ROWS_DRIFT', '');
+  setConfig('TICKET_RECONCILE_PAGE', '');
+  setConfig('TICKET_RECONCILE_ATTEMPTS', '');
 }

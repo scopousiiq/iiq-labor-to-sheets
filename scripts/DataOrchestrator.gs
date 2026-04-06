@@ -9,13 +9,15 @@ const DATA_LOAD_TYPES = {
   RESOLUTION_ACTIONS: 'RESOLUTION_ACTIONS',
   TICKETS: 'TICKETS',
   ACTIVITIES: 'ACTIVITIES',
+  TICKET_RECONCILE: 'TICKET_RECONCILE',
   OPEN_REFRESH: 'OPEN_REFRESH'
 };
 
 const LOAD_GROUPS = {
   1: [DATA_LOAD_TYPES.TEAMS, DATA_LOAD_TYPES.USERS, DATA_LOAD_TYPES.LABOR_TYPES, DATA_LOAD_TYPES.RESOLUTION_ACTIONS],
   2: [DATA_LOAD_TYPES.TICKETS],
-  3: [DATA_LOAD_TYPES.ACTIVITIES]
+  3: [DATA_LOAD_TYPES.ACTIVITIES],
+  4: [DATA_LOAD_TYPES.TICKET_RECONCILE]
 };
 
 const LOAD_STATES = {
@@ -47,7 +49,7 @@ function clearLoadStates() {
 function initializeAllLoads() {
   Object.keys(DATA_LOAD_TYPES).forEach(key => {
     const type = DATA_LOAD_TYPES[key];
-    if (type === DATA_LOAD_TYPES.OPEN_REFRESH) return;
+    if (type === DATA_LOAD_TYPES.OPEN_REFRESH || type === DATA_LOAD_TYPES.TICKET_RECONCILE) return;
     setLoadState(type, LOAD_STATES.PENDING);
   });
 
@@ -62,6 +64,11 @@ function initializeAllLoads() {
   setConfig('OPEN_REFRESH_STAGE', '');
   setConfig('OPEN_REFRESH_OPEN_PAGE', '');
   setConfig('OPEN_REFRESH_CLOSED_PAGE', '');
+  setConfig('TICKET_LOAD_EXPECTED_COUNT', '');
+  setConfig('TICKET_LOAD_FIRST_TOTAL_ROWS', '');
+  setConfig('TICKET_LOAD_TOTAL_ROWS_DRIFT', '');
+  setConfig('TICKET_RECONCILE_PAGE', '');
+  setConfig('TICKET_RECONCILE_ATTEMPTS', '');
 }
 
 function isGroupComplete(groupNum) {
@@ -151,6 +158,9 @@ function executeNextLoadInternal_() {
         break;
       case DATA_LOAD_TYPES.ACTIVITIES:
         loadActivitiesInitial();
+        break;
+      case DATA_LOAD_TYPES.TICKET_RECONCILE:
+        reconcileTickets();
         break;
       default:
         throw new Error('Unknown load type: ' + nextLoad);

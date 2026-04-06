@@ -22,8 +22,9 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 |------|------|
 | `Config.gs` | Configuration read/write, type coercion helpers, config caching, LockService concurrency, `requireNoTriggers` guard, school year locking, date utilities, operation logging |
 | `ApiClient.gs` | HTTP client with exponential backoff retry (max 5 retries), paginated fetch via `fetchAllPagesWithQueryParams()` |
-| `DataOrchestrator.gs` | Load state machine: groups loads into 3 phases (reference data → tickets → activities), tracks per-type state (idle/pending/in_progress/complete/error) |
-| `TicketData.gs` | Paginated ticket loading with 5.5-minute runtime guard (`MAX_RUNTIME_MS`), open ticket refresh with upsert, filter builders for IIQ API |
+| `DataOrchestrator.gs` | Load state machine: groups loads into 4 phases (reference data → tickets → activities → reconciliation), tracks per-type state (idle/pending/in_progress/complete/error) |
+| `DataValidation.gs` | Post-load validation (ticket count snapshot check, per-ticket labor minute reconciliation) and auto-recovery via resumable ticket reconciliation |
+| `TicketData.gs` | Paginated ticket loading with 5.5-minute runtime guard (`MAX_RUNTIME_MS`), TotalRows snapshot/drift tracking, open ticket refresh with upsert, filter builders for IIQ API |
 | `ActivityLog.gs` | Activity loading per-ticket with batch processing, failure tracking/retry via `ActivityFailures` sheet, upsert via index maps |
 | `ReferenceData.gs` | Loads teams, users (by iterating team members), and resolution actions |
 | `Index.gs` | Hidden `TicketIndex`/`ActivityIndex` sheets for O(1) row lookups enabling upsert without full-sheet scans |
@@ -33,7 +34,7 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 
 ### Data Flow
 
-1. **Load groups execute sequentially:** Group 1 (Teams, Users, ResolutionActions) → Group 2 (Tickets) → Group 3 (Activities)
+1. **Load groups execute sequentially:** Group 1 (Teams, Users, ResolutionActions) → Group 2 (Tickets) → Group 3 (Activities) → Group 4 (Ticket Reconcile, only if validation detects shortfall)
 2. **Resumable pagination:** Long loads pause at `MAX_RUNTIME_MS` (5.5 min) and resume via `triggerDataLoadMonitor` trigger or manual "Continue Loading"
 3. **Upsert pattern:** Index sheets map entity IDs to row numbers. New records append; existing records update in-place via `writeBatchedUpdates()`
 4. **School year locking:** Once data loading begins, `SCHOOL_YEAR_START`/`SCHOOL_YEAR_END`/`PAGE_SIZE`/`MODULE` are locked in Config and cell-protected. A full reload is required to change them.
@@ -186,6 +187,23 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 | `OPEN_REFRESH_STAGE` | `OPEN`/`CLOSED` stage during refresh |
 | `OPEN_REFRESH_OPEN_PAGE` | Current page for open ticket refresh |
 | `OPEN_REFRESH_CLOSED_PAGE` | Current page for closed ticket refresh |
+| `TICKET_LOAD_EXPECTED_COUNT` | Last-observed `Paging.TotalRows` during ticket load (validation baseline) |
+| `TICKET_LOAD_FIRST_TOTAL_ROWS` | First-observed `Paging.TotalRows` (drift detection baseline) |
+| `TICKET_LOAD_TOTAL_ROWS_DRIFT` | Delta between first and last TotalRows if dataset changed during load |
+| `TICKET_RECONCILE_PAGE` | Current reconciliation pagination page |
+| `TICKET_RECONCILE_ATTEMPTS` | Number of reconciliation passes attempted (max 2) |
+
+## Post-Load Validation & Reconciliation
+
+After activities complete, `validateLoadedData()` runs automatically:
+
+1. **Ticket count check** — Compares `TICKET_LOAD_EXPECTED_COUNT` (snapshot from ticket load) against unique non-blank TicketIds in TicketIndex, cross-checked against RawData. No API calls.
+2. **Labor minute reconciliation** — Sums `ActivityLog.EffortMins` per ticket and compares to `RawData.TotalLaborMins`. Classifies directionally: `missing_activities` (sum=0, ticket>0), `under_reported` (sum<ticket), `over_reported` (sum>ticket, likely timing gap). No API calls.
+3. **Reconcile trigger** — If ticket count shortfall detected, sets `LOAD_STATE_TICKET_RECONCILE` to pending. Activity mismatches are log-only (no auto-recovery in v1).
+
+`TICKET_RECONCILE` is Group 4 in the load state machine, picked up by the 10-minute monitor trigger. It re-paginates with `upsertTickets()`, fetches activities for any recovered tickets, revalidates, and caps at 2 automatic attempts before error-state-and-stop.
+
+Available manually via: iiQ Data → Troubleshooting → Validate Data.
 
 ## Formula Patterns
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-04-06
+
+### Fixed
+- **Missing labor from pre-school-year tickets** (`TicketData.gs`) — Initial ticket load only filtered by `createddate` within the school year, missing tickets created before the school year that had labor logged during it. Added `modifieddate` OR filter using IIQ API `GroupIndex` grouping so the initial load captures tickets created during the school year OR modified during the school year. Fixes 540+ missing labor hours across 17 users from 431 tickets. Refresh filters are unchanged.
+
+## 2026-03-20
+
+### Added
+- **Post-load data validation** (`DataValidation.gs`) — New file with sheet-only validation that runs automatically after activities complete. Checks ticket count against a load-time snapshot (`TICKET_LOAD_EXPECTED_COUNT`) and performs per-ticket labor minute reconciliation comparing `RawData.TotalLaborMins` to summed `ActivityLog.EffortMins`. Classifies mismatches directionally: `missing_activities`, `under_reported` (likely missing some), `over_reported` (likely timing gap). Logs structured results with capped sample ticket IDs.
+- **Automatic ticket reconciliation** (`DataValidation.gs`, `DataOrchestrator.gs`) — New `TICKET_RECONCILE` load type (Group 4) triggered when validation detects ticket count shortfall. Re-paginates with `upsertTickets()` (resumable, respects `MAX_RUNTIME_MS`), fetches activities for recovered tickets, revalidates afterward. Capped at 2 automatic attempts; errors out and clears expected count on persistent failure.
+- **Ticket count snapshot and drift detection** (`TicketData.gs`) — Stores first-seen and last-observed `Paging.TotalRows` during paginated ticket load. Logs drift if TotalRows changes across pages, distinguishing "dataset moved during load" from "pagination lost a ticket."
+- **Validate Data menu item** (`Menu.gs`) — New item under Troubleshooting for manual spot-check validation with UI dialog showing ticket count and labor minute results.
+
+### Fixed
+- **Activity batch JSON truncation** (`ApiClient.gs`, `ActivityLog.gs`, `Config.gs`) — Batch activity requests with 2000 ticket IDs produced responses too large for `UrlFetchApp`, causing truncated JSON ("Unterminated string at position 32517"). Added JSON parse error retry with backoff in `apiRequest()`. Introduced `ACTIVITY_BATCH_SIZE` config (default 100) separate from `PAGE_SIZE` to keep activity batch responses small. All activity batch callers (`loadActivitiesInitial`, `refreshActivitiesForTickets`, `processFailedActivityTickets`) now use `getActivityBatchSize()`.
+- **USERS load blocked by single bad team** (`ReferenceData.gs`) — If one team's `/members` endpoint returned an error (e.g., "Address unavailable"), the entire USERS load failed and blocked Group 1, preventing Tickets and Activities from ever starting. Now wraps per-team fetch in try/catch, logs a warning with team name/ID, skips the bad team, and continues.
+
 ## 2026-03-19
 
 ### Added

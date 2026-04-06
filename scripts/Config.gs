@@ -4,11 +4,16 @@
 
 const CONFIG_DEFAULTS = {
   'PAGE_SIZE': '2000',
+  'ACTIVITY_BATCH_SIZE': '100',
   'THROTTLE_MS': '1000',
   'OPEN_REFRESH_DAYS': '14',
   'SCHOOL_YEAR_LOCKED': 'FALSE',
   'MODULE': 'Ticketing'
 };
+
+function getActivityBatchSize() {
+  return getIntValue(getConfig('ACTIVITY_BATCH_SIZE'), 100);
+}
 
 const CONFIG_REQUIRED = ['API_BASE_URL', 'BEARER_TOKEN', 'SITE_ID', 'SCHOOL_YEAR_START', 'SCHOOL_YEAR_END', 'MODULE'];
 
