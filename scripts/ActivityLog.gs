@@ -363,6 +363,54 @@ function buildUserMap() {
   return map;
 }
 
+// Repairs blank PerformedByUser (col N) values in existing ActivityLog rows
+// by looking up PerformedByUserId (col M) in the Users sheet. Also fills
+// blank TeamId/TeamName (cols Q/R) when the matched user has a team.
+// Returns { repaired, stillMissing } where stillMissing is the count of rows
+// whose user ID is still not in the Users sheet (caller should backfill first).
+function repairBlankPerformedByUserNames() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var actSheet = ss.getSheetByName('ActivityLog');
+  if (!actSheet) return { repaired: 0, stillMissing: 0 };
+
+  var lastRow = actSheet.getLastRow();
+  if (lastRow < 2) return { repaired: 0, stillMissing: 0 };
+
+  var userMap = buildUserMap();
+
+  // Read columns M:R (PerformedByUserId, PerformedByUser, Notes, IsPublic, TeamId, TeamName)
+  // in a single batch. We only edit M (id is preserved), N (name), Q (teamId), R (teamName);
+  // O (Notes) and P (IsPublic) are passed through unchanged.
+  var range = actSheet.getRange(2, 13, lastRow - 1, 6);
+  var values = range.getValues();
+
+  var repaired = 0;
+  var stillMissing = 0;
+  for (var i = 0; i < values.length; i++) {
+    var userId = values[i][0];
+    var name = values[i][1];
+    if (!userId || name) continue;
+
+    var user = userMap[userId];
+    if (!user || !user.name) {
+      stillMissing++;
+      continue;
+    }
+
+    values[i][1] = user.name;
+    // Only fill team cells if they are currently blank
+    if (!values[i][4] && user.teamId) values[i][4] = user.teamId;
+    if (!values[i][5] && user.teamName) values[i][5] = user.teamName;
+    repaired++;
+  }
+
+  if (repaired > 0) {
+    range.setValues(values);
+  }
+
+  return { repaired: repaired, stillMissing: stillMissing };
+}
+
 function buildLaborTypeMap() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('LaborTypes');
   const map = {};

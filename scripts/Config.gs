@@ -2,6 +2,17 @@
  * Config.gs - Configuration, logging, concurrency, and type helpers for iiQ Labor Tracker
  */
 
+/** Current script version — bump on release; see version.json at repo root. */
+const SCRIPT_VERSION = '1.0.0';
+
+/**
+ * Telemetry Master /exec URL (iiQ-owned). Maintainer-managed — districts
+ * never see or edit it. Empty string disables telemetry entirely for this
+ * build. Aggregator distinguishes projects via TELEMETRY_PROJECT (see
+ * Telemetry.gs).
+ */
+const TELEMETRY_URL = 'https://script.google.com/macros/s/AKfycbyaPAkUWjAqkYgX01WhJlNGNQuZACDtQ_6zNVUEbHD73RDaM5uWq7IwwqwD54mP9qXYZA/exec';
+
 const CONFIG_DEFAULTS = {
   'PAGE_SIZE': '2000',
   'ACTIVITY_BATCH_SIZE': '100',
@@ -443,4 +454,105 @@ function requireNoTriggers(operationName) {
     return false;
   }
   return true;
+}
+
+// =============================================================================
+// VERSION CHECK - Remote update detection via GitHub
+// =============================================================================
+
+/**
+ * Check for script updates from GitHub.
+ * Fetches remote version.json and updates Config sheet display.
+ * Fails silently on any error — version check must never break anything.
+ */
+function checkForUpdates() {
+  try {
+    const REMOTE_VERSION_URL =
+      'https://raw.githubusercontent.com/scopousiiq/iiq-labor-to-sheets/main/version.json';
+
+    const response = UrlFetchApp.fetch(REMOTE_VERSION_URL, {
+      muteHttpExceptions: true,
+      followRedirects: true
+    });
+
+    if (response.getResponseCode() !== 200) {
+      logOperation('VersionCheck', 'WARN',
+        'Could not reach GitHub (HTTP ' + response.getResponseCode() + ')');
+      return { ok: false, reason: 'http_' + response.getResponseCode() };
+    }
+
+    const remote = JSON.parse(response.getContentText());
+    const remoteVersion = remote.version;
+
+    if (!remoteVersion) {
+      logOperation('VersionCheck', 'WARN', 'Remote version.json missing version field');
+      return { ok: false, reason: 'no_version_field' };
+    }
+
+    const updateAvailable = isNewerVersion(remoteVersion, SCRIPT_VERSION);
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName('Config');
+    if (!sheet) return { ok: false, reason: 'no_config_sheet' };
+
+    setConfig('SCRIPT_VERSION', SCRIPT_VERSION);
+    setConfig('VERSION_CHECK_DATE', new Date().toISOString().split('T')[0]);
+
+    if (updateAvailable) {
+      setConfig('LATEST_VERSION', remoteVersion + '  ← update available');
+    } else {
+      setConfig('LATEST_VERSION', remoteVersion + '  (up to date)');
+    }
+
+    // Apply background color to the LATEST_VERSION value cell
+    const data = sheet.getDataRange().getValues();
+    for (let i = 0; i < data.length; i++) {
+      if (data[i][0] === 'LATEST_VERSION') {
+        const cell = sheet.getRange(i + 1, 2);
+        if (updateAvailable) {
+          cell.setBackground('#fff2cc'); // light yellow
+        } else {
+          cell.setBackground('#d9ead3'); // light green
+        }
+        break;
+      }
+    }
+
+    if (updateAvailable) {
+      logOperation('VersionCheck', 'UPDATE_AVAILABLE',
+        'v' + remoteVersion + ' available (current: v' + SCRIPT_VERSION + '). ' +
+        (remote.releaseUrl || '') + ' — ' + (remote.message || ''));
+    } else {
+      logOperation('VersionCheck', 'CURRENT', 'v' + SCRIPT_VERSION + ' is up to date');
+    }
+
+    return {
+      ok: true,
+      current: SCRIPT_VERSION,
+      latest: remoteVersion,
+      updateAvailable: updateAvailable,
+      releaseUrl: remote.releaseUrl || '',
+      message: remote.message || ''
+    };
+
+  } catch (e) {
+    logOperation('VersionCheck', 'ERROR', 'Version check failed: ' + e.message);
+    return { ok: false, reason: 'exception', error: e.message };
+  }
+}
+
+/**
+ * Compare two semver strings (e.g., "1.2.0" vs "1.3.0").
+ * Returns true if remoteVer is newer than localVer.
+ */
+function isNewerVersion(remoteVer, localVer) {
+  const remote = String(remoteVer).split('.').map(Number);
+  const local = String(localVer).split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const r = remote[i] || 0;
+    const l = local[i] || 0;
+    if (r > l) return true;
+    if (r < l) return false;
+  }
+  return false;
 }

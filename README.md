@@ -27,7 +27,7 @@ In the `Config` sheet, enter your Incident IQ credentials:
 | Setting | Value | Where to Find It |
 |---------|-------|------------------|
 | `API_BASE_URL` | `https://yourdistrict.incidentiq.com` | Your iiQ URL (the `/api` is added automatically) |
-| `BEARER_TOKEN` | Your API token | iiQ Admin > Integrations > API |
+| `BEARER_TOKEN` | Your API token | iiQ Admin > Developer Tools |
 | `SITE_ID` | Your site UUID | Only needed for multi-site districts |
 | `MODULE` | `Ticketing` or `Facilities` | Dropdown in Config sheet (defaults to Ticketing) |
 | `SCHOOL_YEAR_START` | School year start date | e.g., 2025-06-01 |

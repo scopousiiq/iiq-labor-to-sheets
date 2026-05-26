@@ -186,7 +186,7 @@ function setupInstructionsSheet(ss) {
   writeLine('1. Run  iiQ Data > Setup > Run Complete Setup');
   writeLine('2. Go to the Config sheet and fill in:');
   writeLine('     API_BASE_URL  —  your district\'s IncidentIQ URL (e.g. https://district.incidentiq.com)');
-  writeLine('     BEARER_TOKEN  —  your API bearer token (JWT)');
+  writeLine('     BEARER_TOKEN  —  your API bearer token (JWT) — obtain from iiQ: Admin > Developer Tools');
   writeLine('     SITE_ID  —  your site UUID');
   writeLine('     MODULE  —  Ticketing or Facilities (selects the IncidentIQ module)');
   writeLine('     SCHOOL_YEAR_START / SCHOOL_YEAR_END  —  the date range for data');
@@ -341,6 +341,32 @@ function setupInstructionsSheet(ss) {
   writeLine('- Hidden sheets (TicketIndex, ActivityIndex, ActivityFailures) support fast lookups — don\'t modify.');
   writeLine('- THROTTLE_MS (default 1000) controls delay between API calls. Lower = faster but may hit rate limits.');
   writeLine('- PAGE_SIZE (default 2000) controls records per API call. Larger = fewer calls but more memory.');
+  blankRow();
+
+  // ===== TELEMETRY =====
+  writeSectionHeader('ANONYMOUS USAGE TELEMETRY');
+  writeLine('Anonymous usage telemetry pings the iiQ team once per successful refresh, so');
+  writeLine('we can see which districts run which version, on which iiQ instance, with');
+  writeLine('how many activity rows — to prioritize features and catch regressions early.');
+  blankRow();
+  writeLine('What is sent (per ping):');
+  writeLine('  • Stable install ID (UUID — generated locally, contains no PII)');
+  writeLine('  • Project name (iiq-labor-to-sheets) and script version');
+  writeLine('  • iiQ instance hostname (e.g. demo.incidentiq.com)');
+  writeLine('  • ActivityLog row count');
+  writeLine('  • Names of analytics sheets present (only the canonical set this project ships)');
+  writeLine('  • Script time zone, install timestamp, send timestamp');
+  blankRow();
+  writeLine('What is NOT sent: ticket/labor data, API tokens, user names or emails,');
+  writeLine('custom sheet names you add yourself, anything from row contents.');
+  blankRow();
+  writeLine('POLICY: Automated polling requires telemetry opt-in.');
+  writeLine('  • To opt out, set TELEMETRY_ENABLED to FALSE in the Config sheet.');
+  writeLine('  • This DISABLES automated polling: time-based triggers uninstall on next fire.');
+  writeLine('  • Manual menu actions (iiQ Data → Load Data → ...) continue to work.');
+  blankRow();
+  writeLine('To re-enable: set TELEMETRY_ENABLED back to TRUE, then run');
+  writeLine('iiQ Data → Setup → Setup Automated Triggers to reinstall the triggers.');
 
   // Freeze row 1 for the title
   sheet.setFrozenRows(1);
@@ -378,7 +404,11 @@ function setupConfigSheet(ss) {
     ['SCHOOL_YEAR_LOCKED_START', '', 'Managed automatically'],
     ['SCHOOL_YEAR_LOCKED_END', '', 'Managed automatically'],
     ['PAGE_SIZE_LOCKED', '', 'Managed automatically'],
-    ['MODULE_LOCKED', '', 'Managed automatically']
+    ['MODULE_LOCKED', '', 'Managed automatically'],
+    ['SCRIPT_VERSION', SCRIPT_VERSION, 'Installed version (auto-stamped)'],
+    ['LATEST_VERSION', '', 'Filled by iiQ Data → Setup → Check for Updates'],
+    ['VERSION_CHECK_DATE', '', 'Last update-check date'],
+    ['TELEMETRY_ENABLED', 'TRUE', 'Set FALSE to opt out (also disables automated polling)']
   ];
 
   sheet.getRange(2, 1, rows.length, 3).setValues(rows);

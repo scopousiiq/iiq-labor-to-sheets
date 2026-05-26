@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-05-26
+
+### Changed
+- **BEARER_TOKEN documentation** (`README.md`, `Setup.gs`) — Updated "where to find your API token" guidance from "Admin > Integrations > API" to "Admin > Developer Tools" to match the current iiQ admin UI.
+
+### Added
+- **Anonymous usage telemetry** (`scripts/Telemetry.gs`, `Config.gs`, `Triggers.gs`, `DataOrchestrator.gs`, `Setup.gs`) — Ported the canonical pattern from `iiq-tickets-to-sheets`. One ping per successful trigger refresh to the iiQ-owned aggregator; payload is install ID (UUID), project slug, version, iiQ hostname, ActivityLog row count, and the names of canonical analytics sheets present. No labor data, tokens, user names, or custom sheet names are sent. `enforceTelemetryGate()` runs at the head of every trigger-fired function (`triggerDataLoadMonitor`, `triggerDailyOpenRefresh`) and auto-uninstalls all CLOCK triggers if `TELEMETRY_ENABLED` is not TRUE. `assertTelemetryEnabledForTriggers()` blocks `setupDefaultTriggers` / `ensureMonitorTrigger` when telemetry is off. `reportTelemetry()` runs at the tail of each successful trigger.
+- **Remote version check** (`Config.gs`, `Menu.gs`, `version.json`) — Added `SCRIPT_VERSION` constant (1.0.0), `version.json` at repo root, and `checkForUpdates()` that fetches the remote `version.json` from GitHub, compares semver, and writes `SCRIPT_VERSION`/`LATEST_VERSION`/`VERSION_CHECK_DATE` to the Config sheet (with yellow/green background to signal update available vs. up to date). New menu item: `iiQ Data → Setup → Check for Updates`.
+- **Config sheet seeding** (`Setup.gs`) — `setupConfigSheet` now writes `SCRIPT_VERSION`, `LATEST_VERSION`, `VERSION_CHECK_DATE`, and `TELEMETRY_ENABLED=TRUE` rows on fresh install. Instructions sheet gets a new "Anonymous Usage Telemetry" section describing exactly what is and isn't sent, plus the opt-out instructions.
+
+### Migration note
+For installs created before this release, the `TELEMETRY_ENABLED` row will not yet exist in the Config sheet. `assertTelemetryEnabledForTriggers` seeds it as TRUE on the next trigger setup (matching the new-install default); districts can flip it to FALSE at any time.
+
+### Fixed
+- **Blank `PerformedByUser` in ActivityLog** (`ReferenceData.gs`, `ActivityLog.gs`, `Menu.gs`) — Users not on any team (admins, system service accounts, agents with no team assignment, and demoted/role-changed agents) were never loaded into the Users sheet because `loadUsers()` only walked `/v1.0/teams/{teamId}/members`. As a result, the `userMap` lookup in `buildActivityRow` returned blank for those users, leaving 1,612 of 13,900 ActivityLog rows with a `PerformedByUserId` but no `PerformedByUser` name.
+
+### Added
+- **Team-less agent augmentation** (`ReferenceData.gs`) — After the team-walk completes, `loadUsers()` now calls `augmentUsersWithAgents()`, which pulls `/v1.0/users/agents` and appends any agents missing from the Users sheet (catches admins, system service accounts, and agents with no team).
+- **Activity-driven user backfill** (`ReferenceData.gs`) — New `backfillMissingUsersFromActivities()` scans ActivityLog for unique `PerformedByUserId` values not in the Users sheet and fetches each via `GET /v1.0/users/{id}`. Catches users whose role has since changed (e.g. demoted agents who logged historical labor).
+- **In-place ActivityLog repair** (`ActivityLog.gs`) — New `repairBlankPerformedByUserNames()` reads ActivityLog cols M–R in a single batch, fills blank `PerformedByUser` names (and any blank Team cells) from the now-complete Users sheet, and writes back in one `setValues` call.
+- **Troubleshooting → Backfill Missing User Names menu item** (`Menu.gs`) — Wires the three steps above into a single user-facing action with a summary dialog (agents added, historical users added, rows repaired, rows still missing).
+
 ## 2026-04-06
 
 ### Fixed

@@ -14,6 +14,7 @@ function onOpen() {
       .addItem('Regenerate Analytics Sheets', 'regenerateAnalyticsSheetsWithConfirm')
       .addItem('Test API Connection', 'showApiTestResult')
       .addItem('Verify Configuration', 'showConfigStatus')
+      .addItem('Check for Updates', 'menuCheckForUpdates')
       .addSeparator()
       .addItem('Setup Automated Triggers', 'setupDefaultTriggers')
       .addItem('Remove Automated Triggers', 'removeAllTriggers')
@@ -26,6 +27,7 @@ function onOpen() {
       .addItem('Open Ticket Refresh', 'startOpenRefresh'))
     .addSubMenu(ui.createMenu('Troubleshooting')
       .addItem('Validate Data', 'showValidationResults')
+      .addItem('Backfill Missing User Names', 'menuBackfillMissingUserNames')
       .addItem('View Logs', 'showLogs')
       .addItem('Reset Load States', 'resetLoadStatesWithConfirm')
       .addItem('Full Reload (Clear Data)', 'startFullReloadWithConfirm'))
@@ -82,6 +84,35 @@ function menuRefreshReferenceData() {
   }
 }
 
+function menuCheckForUpdates() {
+  const ui = SpreadsheetApp.getUi();
+  const lock = acquireScriptLock();
+  if (!lock) { showOperationBusyMessage('Check for Updates'); return; }
+  try {
+    const result = checkForUpdates();
+    if (!result || !result.ok) {
+      ui.alert('Update Check Failed',
+        'Could not reach GitHub. See the Logs sheet for details.',
+        ui.ButtonSet.OK);
+      return;
+    }
+    if (result.updateAvailable) {
+      ui.alert('Update Available',
+        'Installed: v' + result.current + '\n' +
+        'Available: v' + result.latest + '\n\n' +
+        (result.message ? result.message + '\n\n' : '') +
+        (result.releaseUrl ? 'Release: ' + result.releaseUrl : ''),
+        ui.ButtonSet.OK);
+    } else {
+      ui.alert('Up to Date',
+        'v' + result.current + ' is the latest version.',
+        ui.ButtonSet.OK);
+    }
+  } finally {
+    releaseScriptLock(lock);
+  }
+}
+
 function menuRefreshLaborTypes() {
   const lock = acquireScriptLock();
   if (!lock) { showOperationBusyMessage('Refresh Labor Types'); return; }
@@ -91,6 +122,47 @@ function menuRefreshLaborTypes() {
     const sheet = ss.getSheetByName('LaborTypes');
     const count = sheet && sheet.getLastRow() > 1 ? sheet.getLastRow() - 1 : 0;
     SpreadsheetApp.getUi().alert('Done', 'Labor types refreshed from API (' + count + ' types loaded).', SpreadsheetApp.getUi().ButtonSet.OK);
+  } finally {
+    releaseScriptLock(lock);
+  }
+}
+
+// Repairs blank PerformedByUser entries in ActivityLog:
+//   1. Pull team-less agents from /v1.0/users/agents into the Users sheet.
+//   2. Backfill any remaining unknown user IDs (e.g. demoted agents) by
+//      fetching /v1.0/users/{id} individually.
+//   3. Rewrite blank ActivityLog!N values in place from the now-complete Users sheet.
+function menuBackfillMissingUserNames() {
+  const ui = SpreadsheetApp.getUi();
+  const lock = acquireScriptLock();
+  if (!lock) { showOperationBusyMessage('Backfill Missing User Names'); return; }
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const usersSheet = ss.getSheetByName('Users');
+    if (!usersSheet) {
+      ui.alert('Backfill Failed', 'Users sheet not found. Run Setup first.', ui.ButtonSet.OK);
+      return;
+    }
+
+    const addedAgents = augmentUsersWithAgents(usersSheet);
+    const addedFromActivity = backfillMissingUsersFromActivities();
+    const result = repairBlankPerformedByUserNames();
+
+    logOperation('USER_BACKFILL', 'SUCCESS',
+      'Added ' + addedAgents + ' agent(s) + ' + addedFromActivity + ' historical user(s); ' +
+      'repaired ' + result.repaired + ' ActivityLog row(s); ' + result.stillMissing + ' still missing');
+
+    ui.alert('Backfill Complete',
+      'Users sheet:\n' +
+      '  +' + addedAgents + ' team-less agents\n' +
+      '  +' + addedFromActivity + ' historical users\n\n' +
+      'ActivityLog:\n' +
+      '  ' + result.repaired + ' row(s) repaired\n' +
+      '  ' + result.stillMissing + ' row(s) still missing (user not retrievable)',
+      ui.ButtonSet.OK);
+  } catch (e) {
+    logOperation('USER_BACKFILL', 'ERROR', e.message);
+    ui.alert('Backfill Failed', e.message, ui.ButtonSet.OK);
   } finally {
     releaseScriptLock(lock);
   }

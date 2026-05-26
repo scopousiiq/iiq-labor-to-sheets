@@ -1,0 +1,6 @@
+{
+  "version": "1.0.0",
+  "released": "2026-05-26",
+  "releaseUrl": "https://github.com/scopousiiq/iiq-labor-to-sheets/releases/latest",
+  "message": "Initial public release with usage telemetry and remote version check. Districts can opt out by setting TELEMETRY_ENABLED=FALSE in the Config sheet (this also disables automated polling)."
+}

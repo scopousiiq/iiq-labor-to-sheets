@@ -8,6 +8,8 @@ function ensureMonitorTrigger() {
     return t.getHandlerFunction() === 'triggerDataLoadMonitor';
   });
   if (!hasMonitor) {
+    // Policy: installing a time-based trigger requires telemetry opt-in.
+    assertTelemetryEnabledForTriggers();
     ScriptApp.newTrigger('triggerDataLoadMonitor')
       .timeBased()
       .everyMinutes(10)
@@ -17,6 +19,26 @@ function ensureMonitorTrigger() {
 }
 
 function setupDefaultTriggers() {
+  const ui = SpreadsheetApp.getUi();
+
+  // Policy: Automated polling requires telemetry opt-in. Throws if
+  // TELEMETRY_ENABLED is not TRUE in the Config sheet.
+  try {
+    assertTelemetryEnabledForTriggers();
+  } catch (e) {
+    ui.alert(
+      'Telemetry Required',
+      e.message + '\n\n' +
+      'To enable automated triggers:\n' +
+      '1. Open the Config sheet\n' +
+      '2. Set TELEMETRY_ENABLED to TRUE\n' +
+      '3. Re-run Setup Automated Triggers',
+      ui.ButtonSet.OK
+    );
+    logOperation('TRIGGERS', 'BLOCKED', e.message);
+    return;
+  }
+
   removeAllTriggers();
 
   ScriptApp.newTrigger('triggerDataLoadMonitor')
@@ -31,7 +53,7 @@ function setupDefaultTriggers() {
     .create();
 
   logOperation('TRIGGERS', 'SUCCESS', 'Installed default triggers');
-  SpreadsheetApp.getUi().alert('Triggers Installed', 'Monitor (10 min) and daily open refresh installed.', SpreadsheetApp.getUi().ButtonSet.OK);
+  ui.alert('Triggers Installed', 'Monitor (10 min) and daily open refresh installed.', ui.ButtonSet.OK);
 }
 
 function removeAllTriggers() {
@@ -52,6 +74,9 @@ function showAutomationStatus() {
 }
 
 function triggerDailyOpenRefresh() {
+  // Policy: Automated polling requires telemetry opt-in.
+  if (!enforceTelemetryGate()) return;
+
   const lock = tryAcquireScriptLock();
   if (!lock) {
     logOperation('TRIGGER_OPEN_REFRESH', 'SKIP', 'Another operation is running');
@@ -72,4 +97,6 @@ function triggerDailyOpenRefresh() {
   } finally {
     releaseScriptLock(lock);
   }
+
+  reportTelemetry();
 }

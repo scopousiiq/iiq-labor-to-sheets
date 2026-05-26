@@ -175,6 +175,9 @@ function executeNextLoadInternal_() {
 }
 
 function triggerDataLoadMonitor() {
+  // Policy: Automated polling requires telemetry opt-in.
+  if (!enforceTelemetryGate()) return;
+
   const lock = tryAcquireScriptLock();
   if (!lock) {
     logOperation('TRIGGER_MONITOR', 'SKIP', 'Another operation is running');
@@ -191,6 +194,8 @@ function triggerDataLoadMonitor() {
   } finally {
     releaseScriptLock(lock);
   }
+
+  reportTelemetry();
 }
 
 function startInitialLoad() {
