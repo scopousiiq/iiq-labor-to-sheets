@@ -88,16 +88,27 @@ function setupLaborTrackerDashboard() {
   if (setupYearSummarySheet(ss)) created.push('YearSummary'); else skipped.push('YearSummary');
   if (setupLogsSheet(ss)) created.push('Logs'); else skipped.push('Logs');
   if (setupActivityFailuresSheet(ss)) created.push('ActivityFailures'); else skipped.push('ActivityFailures');
+
+  // Idempotent Config sheet migration: adds telemetry + version rows to
+  // existing installs whose Config sheet pre-dates those keys, and always
+  // stamps SCRIPT_VERSION to the running code version.
+  const configMigration = ensureConfigSheetUpToDate();
+
   ensureDataSheetsProtected();
   reorderSheets(ss);
 
   const message = [];
   if (created.length > 0) message.push('Created: ' + created.join(', '));
   if (skipped.length > 0) message.push('Already existed: ' + skipped.join(', '));
+  if (configMigration.added.length > 0) {
+    message.push('Config rows added: ' + configMigration.added.join(', '));
+  }
+  message.push('Config SCRIPT_VERSION stamped: v' + SCRIPT_VERSION);
   message.push('\nNext steps:');
   message.push('1. Fill in Config sheet with API credentials');
   message.push('2. Run iiQ Data > Setup > Test API Connection');
-  message.push('3. Run iiQ Data > Load Data > Start Initial Load');
+  message.push('3. Run iiQ Data > Setup > Check for Updates (populates LATEST_VERSION)');
+  message.push('4. Run iiQ Data > Load Data > Start Initial Load');
 
   ui.alert('Setup Complete', message.join('\n'), ui.ButtonSet.OK);
 }
@@ -432,6 +443,53 @@ function setupConfigSheet(ss) {
 
   sheet.setColumnWidths(1, 3, 240);
   return true;
+}
+
+// Idempotent migration: adds telemetry + version-notification rows that the
+// current code expects but that an older Config sheet may lack. Safe to call
+// on a fresh install (setupConfigSheet already wrote them — no-op) or an
+// existing install (appends missing rows). Always stamps SCRIPT_VERSION
+// to the running code version so districts can see the live build at a
+// glance without running checkForUpdates.
+//
+// Returns { added: [keys appended] }.
+function ensureConfigSheetUpToDate() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Config');
+  if (!sheet) {
+    // Defensive: setupConfigSheet should have created it. Bail clean.
+    return { added: [] };
+  }
+
+  // Rows the current code expects. Order matches setupConfigSheet so that
+  // a fresh install + a migrated install end up structurally identical.
+  const required = [
+    ['SCRIPT_VERSION', String(SCRIPT_VERSION), 'Installed version (auto-stamped)'],
+    ['LATEST_VERSION', '', 'Filled by iiQ Data → Setup → Check for Updates'],
+    ['VERSION_CHECK_DATE', '', 'Last update-check date'],
+    ['TELEMETRY_ENABLED', 'TRUE', 'Set FALSE to opt out (also disables automated polling)']
+  ];
+
+  // Scan existing keys
+  const lastRow = sheet.getLastRow();
+  const existingKeys = {};
+  if (lastRow >= 2) {
+    sheet.getRange(2, 1, lastRow - 1, 1).getValues().forEach(function(r) {
+      if (r[0]) existingKeys[r[0]] = true;
+    });
+  }
+
+  const toAppend = required.filter(function(r) { return !existingKeys[r[0]]; });
+  if (toAppend.length > 0) {
+    const startRow = sheet.getLastRow() + 1;
+    sheet.getRange(startRow, 1, toAppend.length, 3).setValues(toAppend);
+  }
+
+  // Always stamp SCRIPT_VERSION to the running code version (overwrite if
+  // existed). setConfig handles both update-existing and append-if-missing.
+  setConfig('SCRIPT_VERSION', String(SCRIPT_VERSION));
+
+  return { added: toAppend.map(function(r) { return r[0]; }) };
 }
 
 function setupDateFiltersSheet(ss) {
