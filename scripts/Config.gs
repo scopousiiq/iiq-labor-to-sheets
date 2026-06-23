@@ -3,7 +3,7 @@
  */
 
 /** Current script version — bump on release; see version.json at repo root. */
-const SCRIPT_VERSION = '1.0.0';
+const SCRIPT_VERSION = '1.1.0';
 
 /**
  * Telemetry Master /exec URL (iiQ-owned). Maintainer-managed — districts

@@ -17,7 +17,10 @@ const ACTIVITY_HEADERS = [
   'HourlyRate', 'LaborCost', 'LaborTypeId', 'LaborTypeName', 'ResolutionActionId',
   'ResolutionActionName', 'PerformedByUserId', 'PerformedByUser', 'Notes', 'IsPublic',
   'TeamId', 'TeamName', 'LocationId', 'LocationName',
-  'IssueCategoryId', 'IssueCategoryName', 'IssueTypeId', 'IssueTypeName'
+  'IssueCategoryId', 'IssueCategoryName', 'IssueTypeId', 'IssueTypeName',
+  // EntryType: 'Action' (resolution-action row) or 'Labor' (labor-entry row).
+  // NetHours: de-duplicated effort used by all hours rollups (see computeNetHours).
+  'EntryType', 'NetHours'
 ];
 
 // --- Helpers ---
@@ -25,6 +28,108 @@ const ACTIVITY_HEADERS = [
 var FMT_DECIMAL = '#,##0.00';
 var FMT_INTEGER = '#,##0';
 var FMT_CURRENCY = '$#,##0.00';
+
+// --- iiQ Brand Theme (CANONICAL_PATTERNS.md "Visual Styling") ---
+// Core palette is brand blue + gold + white; Labor has no assigned domain accent
+// in the brand table, so the hero/Dashboard tab uses gold and data/analytics tabs
+// use brand blue. Never hardcode these hex values inline.
+var BRAND = {
+  blue:      '#365C96',  // primary — headers, banners, data/analytics tabs
+  blueDeep:  '#162F67',  // section-header / title text
+  blueLight: '#E0F3FF',  // section-band fill
+  bluePale:  '#F3F8FF',  // zebra alternating row
+  gold:      '#FEBB12',  // accent — header underline rule, hero tab
+  white:     '#FFFFFF',
+  line:      '#D7DDE6'   // neutral tab for Config/Logs/internal sheets
+};
+
+// Header row: brand-blue fill, white bold, thin gold bottom rule, 28px tall.
+// `row` defaults to 1 (some sheets keep their header on a different row).
+function styleHeaderRow_(sheet, cols, row) {
+  row = row || 1;
+  var r = sheet.getRange(row, 1, 1, Math.max(cols, 1));
+  r.setBackground(BRAND.blue).setFontColor(BRAND.white).setFontWeight('bold')
+   .setFontSize(10).setVerticalAlignment('middle');
+  r.setBorder(null, null, true, null, null, null, BRAND.gold, SpreadsheetApp.BorderStyle.SOLID_THICK);
+  sheet.setRowHeight(row, 28);
+}
+
+// Zebra banding (white / pale-blue) with a brand-blue header. Idempotent.
+function applyBanding_(sheet, cols, rows, headerRow) {
+  headerRow = headerRow || 1;
+  sheet.getBandings().forEach(function(b) { b.remove(); });
+  var total = Math.max(rows - headerRow + 1, 1);
+  var banding = sheet.getRange(headerRow, 1, total, Math.max(cols, 1)).applyRowBanding();
+  banding.setHeaderRowColor(BRAND.blue).setFirstRowColor(BRAND.white).setSecondRowColor(BRAND.bluePale);
+}
+
+// Hero banner across row 1: brand-blue fill, white 16pt bold, gold underline,
+// 40px tall, frozen. Used on Dashboard and Instructions.
+function heroBanner_(sheet, cols) {
+  var r = sheet.getRange(1, 1, 1, Math.max(cols, 1));
+  if (cols > 1) { try { r.merge(); } catch (e) { /* already merged */ } }
+  r.setBackground(BRAND.blue).setFontColor(BRAND.white).setFontWeight('bold')
+   .setFontSize(16).setVerticalAlignment('middle');
+  r.setBorder(null, null, true, null, null, null, BRAND.gold, SpreadsheetApp.BorderStyle.SOLID_THICK);
+  sheet.setRowHeight(1, 40);
+  sheet.setFrozenRows(1);
+}
+
+// Per-sheet theming config. header = header row to style (omit for none);
+// band = apply zebra banding; gridlines = hide gridlines; hero = title banner.
+var THEME_SHEETS = [
+  { name: 'Instructions',       tab: 'gold', hero: true,  gridlines: true },
+  { name: 'Dashboard',          tab: 'gold', hero: true,  gridlines: true },
+  { name: 'RawData',            tab: 'blue', header: 1, band: true },
+  { name: 'ActivityLog',        tab: 'blue', header: 1, band: true },
+  { name: 'Teams',              tab: 'blue', header: 1, band: true },
+  { name: 'Users',              tab: 'blue', header: 1, band: true },
+  { name: 'LaborTypes',         tab: 'blue', header: 1, band: true },
+  { name: 'ResolutionActions',  tab: 'blue', header: 1, band: true },
+  { name: 'ByTeam',             tab: 'blue', header: 1, band: true, gridlines: true },
+  { name: 'ByIndividual',       tab: 'blue', header: 1, band: true, gridlines: true },
+  { name: 'ByDepartment',       tab: 'blue', header: 1, band: true, gridlines: true },
+  { name: 'ByLaborType',        tab: 'blue', header: 1, band: true, gridlines: true },
+  { name: 'ByResolution',       tab: 'blue', header: 1, band: true, gridlines: true },
+  { name: 'ByIssueCategory',    tab: 'blue', header: 1, band: true, gridlines: true },
+  { name: 'ByIssueType',        tab: 'blue', header: 1, band: true, gridlines: true },
+  { name: 'AgentByCategory',    tab: 'blue', header: 1, band: true, gridlines: true },
+  { name: 'TeamByCategory',     tab: 'blue', header: 1, band: true, gridlines: true },
+  { name: 'CategoryByLaborType',tab: 'blue', header: 1, band: true, gridlines: true },
+  { name: 'LocationByCategory', tab: 'blue', header: 1, band: true, gridlines: true },
+  { name: 'ZeroLabor',          tab: 'blue', header: 1, band: true, gridlines: true },
+  { name: 'YearSummary',        tab: 'blue', header: 1, band: true, gridlines: true },
+  { name: 'AgentPivot',         tab: 'blue', header: 2, gridlines: true },
+  // IndividualLookup has an irregular layout (controls + side-by-side summary),
+  // so only tab color + hidden gridlines are applied — no generic header band.
+  { name: 'IndividualLookup',   tab: 'blue', gridlines: true },
+  { name: 'Config',             tab: 'line', header: 1 },
+  { name: 'DateFilters',        tab: 'line' },
+  { name: 'Logs',               tab: 'line', header: 1 }
+];
+
+// Applies the iiQ brand theme to every sheet by name. Safe to re-run; styles
+// whatever sheets currently exist (so it also re-themes an already-built sheet).
+function applyBrandTheme_(ss) {
+  SpreadsheetApp.flush();
+  THEME_SHEETS.forEach(function(cfg) {
+    var sh = ss.getSheetByName(cfg.name);
+    if (!sh) return;
+    var tabColor = cfg.tab === 'gold' ? BRAND.gold : (cfg.tab === 'line' ? BRAND.line : BRAND.blue);
+    try { sh.setTabColor(tabColor); } catch (e) { /* ignore */ }
+    if (cfg.gridlines) { try { sh.setHiddenGridlines(true); } catch (e) { /* ignore */ } }
+    var lastCol = Math.max(sh.getLastColumn(), 1);
+    if (cfg.hero) {
+      heroBanner_(sh, Math.max(lastCol, 2));
+    } else if (cfg.header) {
+      styleHeaderRow_(sh, lastCol, cfg.header);
+      if (cfg.band) {
+        applyBanding_(sh, lastCol, Math.max(sh.getLastRow(), cfg.header), cfg.header);
+      }
+    }
+  });
+  logOperation('SETUP', 'INFO', 'Applied iiQ brand theme to all sheets.');
+}
 
 // Apply number formats to data columns. `formats` is an array of
 // [colLetter, formatString] pairs. Formats from `dataStartRow` down to 1000.
@@ -96,6 +201,7 @@ function setupLaborTrackerDashboard() {
 
   ensureDataSheetsProtected();
   reorderSheets(ss);
+  applyBrandTheme_(ss);
 
   const message = [];
   if (created.length > 0) message.push('Created: ' + created.join(', '));
@@ -106,9 +212,9 @@ function setupLaborTrackerDashboard() {
   message.push('Config SCRIPT_VERSION stamped: v' + SCRIPT_VERSION);
   message.push('\nNext steps:');
   message.push('1. Fill in Config sheet with API credentials');
-  message.push('2. Run iiQ Data > Setup > Test API Connection');
-  message.push('3. Run iiQ Data > Setup > Check for Updates (populates LATEST_VERSION)');
-  message.push('4. Run iiQ Data > Load Data > Start Initial Load');
+  message.push('2. Run iiQ Labor > Setup > Test API Connection');
+  message.push('3. Run iiQ Labor > Setup > Check for Updates (populates LATEST_VERSION)');
+  message.push('4. Run iiQ Labor > Labor Data > Start Initial Load');
 
   ui.alert('Setup Complete', message.join('\n'), ui.ButtonSet.OK);
 }
@@ -147,22 +253,28 @@ function reorderSheets(ss) {
 }
 
 function setupInstructionsSheet(ss) {
-  if (ss.getSheetByName('Instructions')) return false;
+  // Idempotent (canonical Instructions pattern) — recreate so content/branding
+  // changes propagate on re-run. (Config/Logs stay non-idempotent to preserve data.)
+  deleteSheetIfExists(ss, 'Instructions');
 
   const sheet = ss.insertSheet('Instructions');
   sheet.setColumnWidth(1, 700);
   sheet.setColumnWidth(2, 500);
+  sheet.setHiddenGridlines(true);
 
   // --- Section builders ---
   var row = 1;
 
   function writeHeader(text) {
+    // Hero banner is finalized by applyBrandTheme_(); set the title text here.
     sheet.getRange(row, 1).setValue(text).setFontWeight('bold').setFontSize(14);
     row++;
   }
 
   function writeSectionHeader(text) {
-    sheet.getRange(row, 1).setValue(text).setFontWeight('bold').setFontSize(11);
+    // Brand section band: deep-blue bold text on a light-blue fill (both columns).
+    sheet.getRange(row, 1, 1, 2).setBackground(BRAND.blueLight);
+    sheet.getRange(row, 1).setValue(text).setFontWeight('bold').setFontSize(11).setFontColor(BRAND.blueDeep);
     row++;
   }
 
@@ -194,17 +306,17 @@ function setupInstructionsSheet(ss) {
 
   // ===== QUICK START =====
   writeSectionHeader('QUICK START');
-  writeLine('1. Run  iiQ Data > Setup > Run Complete Setup');
+  writeLine('1. Run  iiQ Labor > Setup > Run Complete Setup');
   writeLine('2. Go to the Config sheet and fill in:');
   writeLine('     API_BASE_URL  —  your district\'s IncidentIQ URL (e.g. https://district.incidentiq.com)');
   writeLine('     BEARER_TOKEN  —  your API bearer token (JWT) — obtain from iiQ: Admin > Developer Tools');
   writeLine('     SITE_ID  —  your site UUID');
   writeLine('     MODULE  —  Ticketing or Facilities (selects the IncidentIQ module)');
   writeLine('     SCHOOL_YEAR_START / SCHOOL_YEAR_END  —  the date range for data');
-  writeLine('3. Run  iiQ Data > Setup > Test API Connection  to verify credentials');
-  writeLine('4. Run  iiQ Data > Load Data > Start Initial Load  to begin pulling data');
+  writeLine('3. Run  iiQ Labor > Setup > Test API Connection  to verify credentials');
+  writeLine('4. Run  iiQ Labor > Labor Data > Start Initial Load  to begin pulling data');
   writeLine('5. Wait for loading to complete (large datasets load in batches across multiple runs)');
-  writeLine('6. (Optional) Run  iiQ Data > Setup > Setup Automated Triggers  for daily refresh');
+  writeLine('6. (Optional) Run  iiQ Labor > Setup > Setup Automated Triggers  for daily refresh');
   blankRow();
 
   // ===== HOW DATA LOADING WORKS =====
@@ -215,11 +327,11 @@ function setupInstructionsSheet(ss) {
   writeLine('  Phase 3:  Activity log (fetches time entries for each ticket)');
   blankRow();
   writeLine('Google Apps Script has a 6-minute execution limit. Large loads automatically pause');
-  writeLine('and resume. You can resume manually (iiQ Data > Load Data > Continue Loading) or');
+  writeLine('and resume. You can resume manually (iiQ Labor > Labor Data > Continue Loading) or');
   writeLine('let the automated monitor trigger pick it up every 10 minutes.');
   blankRow();
   writeLine('Progress is tracked in the Config sheet (TICKET_LOAD_PAGE, ACTIVITY_TICKET_INDEX, etc.).');
-  writeLine('Use  iiQ Data > Check Status  to see current progress at any time.');
+  writeLine('Use  iiQ Labor > Check Status  to see current progress at any time.');
   blankRow();
 
   // ===== SHEET REFERENCE =====
@@ -276,36 +388,44 @@ function setupInstructionsSheet(ss) {
   blankRow();
 
   // ===== MENU REFERENCE =====
-  writeSectionHeader('MENU REFERENCE  (iiQ Data)');
+  writeSectionHeader('MENU REFERENCE  (iiQ Labor)');
   blankRow();
   writePairBold('Menu Item', 'What It Does');
+  writePair('> Continue Loading', 'Primary action — resumes a paused load from where it left off');
   writePair('Check Status', 'Shows current load progress and data counts');
-  writePair('View Dashboard', 'Navigates to the Dashboard sheet');
+  writePair('Open Dashboard', 'Navigates to the Dashboard sheet');
   blankRow();
   writeLine('  Setup submenu:');
-  writePair('  Run Complete Setup', 'Creates all sheets, headers, formulas, and protections');
+  writePair('  Run Complete Setup', 'Creates all sheets, headers, formulas, protections, and brand theme');
   writePair('  Regenerate Analytics Sheets', 'Rebuilds all formula-based sheets (ByTeam, etc.) from scratch');
-  writePair('  Test API Connection', 'Verifies API credentials work');
   writePair('  Verify Configuration', 'Checks all required Config settings are filled in');
+  writePair('  Test API Connection', 'Verifies API credentials work');
   writePair('  Setup Automated Triggers', 'Installs monitor (10 min) and daily refresh (2 AM) triggers');
-  writePair('  Remove Automated Triggers', 'Removes all time-based triggers');
   writePair('  View Trigger Status', 'Shows which triggers are currently installed');
+  writePair('  Remove Automated Triggers', 'Removes all time-based triggers');
+  writePair('  Check for Updates', 'Compares installed version against the latest release');
   blankRow();
-  writeLine('  Load Data submenu:');
+  writeLine('  Labor Data submenu:');
   writePair('  Start Initial Load', 'Begins loading all data for the configured school year');
-  writePair('  Continue Loading', 'Resumes a paused load from where it left off');
-  writePair('  Refresh Reference Data', 'Reloads Teams, Users, and Resolution Actions');
   writePair('  Open Ticket Refresh', 'Updates open tickets and recently closed tickets');
+  writePair('  Refresh Reference Data', 'Reloads Teams, Users, and Resolution Actions');
+  writePair('  Refresh Labor Types', 'Reloads the LaborTypes reference from the API');
+  writePair('  Show Status', 'Shows current load progress and data counts');
   blankRow();
   writeLine('  Troubleshooting submenu:');
+  writePair('  Validate Data', 'Reconciles ticket/labor counts and flags discrepancies');
+  writePair('  Backfill Missing User Names', 'Resolves blank PerformedByUser names from the API');
+  writePair('  Recompute Net Hours', 'Rebuilds the de-duplicated NetHours column (no reload)');
+  writePair('  Repair Team Attribution', 'Recomputes ActivityLog team (ticket team, else user team)');
   writePair('  View Logs', 'Navigates to the Logs sheet');
   writePair('  Reset Load States', 'Resets all load progress (does not delete data)');
   writePair('  Full Reload (Clear Data)', 'Deletes all data and unlocks school year — requires triggers removed first');
+  writePair('  Send Telemetry Ping (Debug)', 'Sends a one-off anonymous usage ping (see telemetry section)');
   blankRow();
 
   // ===== AUTOMATION =====
   writeSectionHeader('AUTOMATION');
-  writeLine('Two automated triggers are available (install via iiQ Data > Setup > Setup Automated Triggers):');
+  writeLine('Two automated triggers are available (install via iiQ Labor > Setup > Setup Automated Triggers):');
   blankRow();
   writePairBold('Trigger', 'Schedule & Purpose');
   writePair('Data Load Monitor', 'Every 10 minutes — resumes any paused loads automatically');
@@ -322,8 +442,8 @@ function setupInstructionsSheet(ss) {
   blankRow();
   writeLine('Once data loading begins, the school year dates and Module are LOCKED to prevent accidental changes.');
   writeLine('To load a different school year:');
-  writeLine('  1. Remove triggers  (iiQ Data > Setup > Remove Automated Triggers)');
-  writeLine('  2. Full Reload  (iiQ Data > Troubleshooting > Full Reload) — this clears all data and unlocks dates');
+  writeLine('  1. Remove triggers  (iiQ Labor > Setup > Remove Automated Triggers)');
+  writeLine('  2. Full Reload  (iiQ Labor > Troubleshooting > Full Reload) — this clears all data and unlocks dates');
   writeLine('  3. Update SCHOOL_YEAR_START and SCHOOL_YEAR_END in Config');
   writeLine('  4. Start Initial Load');
   blankRow();
@@ -374,10 +494,43 @@ function setupInstructionsSheet(ss) {
   writeLine('POLICY: Automated polling requires telemetry opt-in.');
   writeLine('  • To opt out, set TELEMETRY_ENABLED to FALSE in the Config sheet.');
   writeLine('  • This DISABLES automated polling: time-based triggers uninstall on next fire.');
-  writeLine('  • Manual menu actions (iiQ Data → Load Data → ...) continue to work.');
+  writeLine('  • Manual menu actions (iiQ Labor → Labor Data → ...) continue to work.');
   blankRow();
   writeLine('To re-enable: set TELEMETRY_ENABLED back to TRUE, then run');
-  writeLine('iiQ Data → Setup → Setup Automated Triggers to reinstall the triggers.');
+  writeLine('iiQ Labor → Setup → Setup Automated Triggers to reinstall the triggers.');
+  blankRow();
+
+  // ===== DASHBOARD INTEGRATION =====
+  writeSectionHeader('DASHBOARD INTEGRATION (Looker Studio / Power BI)');
+  writeLine('The rollup sheets are BI-ready. To build an external dashboard:');
+  blankRow();
+  writeLine('Looker Studio:');
+  writeLine('  1. In Looker Studio, Create > Data Source > Google Sheets connector.');
+  writeLine('  2. Pick this spreadsheet, then a rollup tab (e.g. ByTeam, ByIndividual, YearSummary).');
+  writeLine('  3. Use "Use first row as headers"; set Total Hours / Total Cost as numeric metrics.');
+  writeLine('  4. Recommended charts: time-series of YearSummary hours by month; bar chart of');
+  writeLine('     ByTeam / ByIndividual hours; scorecard of Dashboard Total Hours.');
+  writeLine('  5. Add a date-range control bound to DateFilters, or filter on the month column.');
+  blankRow();
+  writeLine('Power BI:');
+  writeLine('  1. Publish the sheet to the web (File > Share > Publish to web) or use the Google');
+  writeLine('     Sheets / web connector with Get Data > Web.');
+  writeLine('  2. Point at a rollup tab; set Total Hours / Total Cost as decimal columns.');
+  writeLine('  3. Build matrix visuals (Team x Issue Category) from the cross-dimension tabs.');
+  blankRow();
+  writeLine('Tip: connect to the rollup tabs (already aggregated), not the raw ActivityLog, for');
+  writeLine('fast dashboards. Hours come from NetHours (de-duplicated), so totals match the sheet.');
+  blankRow();
+
+  // ===== SUPPORT =====
+  writeSectionHeader('SUPPORT');
+  writeLine('1. Check the Logs sheet — it records every operation, newest first.');
+  writeLine('2. Re-read the TROUBLESHOOTING section above for the most common fixes.');
+  writeLine('3. Run iiQ Labor → Setup → Verify Configuration and Test API Connection.');
+  writeLine('4. Run iiQ Labor → Setup → Check for Updates to confirm you are on the latest version.');
+  writeLine('5. Project home: github.com/scopousiiq/iiq-labor-to-sheets');
+  blankRow();
+  writeLine('Last updated: ' + new Date().toISOString().split('T')[0]);
 
   // Freeze row 1 for the title
   sheet.setFrozenRows(1);
@@ -417,7 +570,7 @@ function setupConfigSheet(ss) {
     ['PAGE_SIZE_LOCKED', '', 'Managed automatically'],
     ['MODULE_LOCKED', '', 'Managed automatically'],
     ['SCRIPT_VERSION', SCRIPT_VERSION, 'Installed version (auto-stamped)'],
-    ['LATEST_VERSION', '', 'Filled by iiQ Data → Setup → Check for Updates'],
+    ['LATEST_VERSION', '', 'Filled by iiQ Labor → Setup → Check for Updates'],
     ['VERSION_CHECK_DATE', '', 'Last update-check date'],
     ['TELEMETRY_ENABLED', 'TRUE', 'Set FALSE to opt out (also disables automated polling)']
   ];
@@ -465,7 +618,7 @@ function ensureConfigSheetUpToDate() {
   // a fresh install + a migrated install end up structurally identical.
   const required = [
     ['SCRIPT_VERSION', String(SCRIPT_VERSION), 'Installed version (auto-stamped)'],
-    ['LATEST_VERSION', '', 'Filled by iiQ Data → Setup → Check for Updates'],
+    ['LATEST_VERSION', '', 'Filled by iiQ Labor → Setup → Check for Updates'],
     ['VERSION_CHECK_DATE', '', 'Last update-check date'],
     ['TELEMETRY_ENABLED', 'TRUE', 'Set FALSE to opt out (also disables automated polling)']
   ];
@@ -636,7 +789,7 @@ function setupByTeamSheet(ss) {
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
     'teams,UNIQUE(FILTER(ActivityLog!R2:R,ActivityLog!R2:R<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
-    'hours,BYROW(teams,LAMBDA(t,SUMIFS(ActivityLog!F:F,ActivityLog!R:R,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'hours,BYROW(teams,LAMBDA(t,SUMIFS(ActivityLog!Z:Z,ActivityLog!R:R,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'cost,BYROW(teams,LAMBDA(t,SUMIFS(ActivityLog!H:H,ActivityLog!R:R,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'entries,BYROW(teams,LAMBDA(t,COUNTIFS(ActivityLog!R:R,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'tickets,BYROW(teams,LAMBDA(t,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!R2:R=t,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
@@ -661,7 +814,7 @@ function setupByIndividualSheet(ss) {
     'endD,DateFilters!$B$6,' +
     'users,UNIQUE(FILTER(ActivityLog!N2:N,ActivityLog!N2:N<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
     'teams,BYROW(users,LAMBDA(u,IFERROR(INDEX(ActivityLog!R:R,MATCH(u,ActivityLog!N:N,0)),""))),' +
-    'hours,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'hours,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!Z:Z,ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'cost,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!H:H,ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'entries,BYROW(users,LAMBDA(u,COUNTIFS(ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'tickets,BYROW(users,LAMBDA(u,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!N2:N=u,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
@@ -685,7 +838,7 @@ function setupByDepartmentSheet(ss) {
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
     'locs,UNIQUE(FILTER(ActivityLog!T2:T,ActivityLog!T2:T<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
-    'hours,BYROW(locs,LAMBDA(l,SUMIFS(ActivityLog!F:F,ActivityLog!T:T,l,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'hours,BYROW(locs,LAMBDA(l,SUMIFS(ActivityLog!Z:Z,ActivityLog!T:T,l,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'cost,BYROW(locs,LAMBDA(l,SUMIFS(ActivityLog!H:H,ActivityLog!T:T,l,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'entries,BYROW(locs,LAMBDA(l,COUNTIFS(ActivityLog!T:T,l,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'tickets,BYROW(locs,LAMBDA(l,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!T2:T=l,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
@@ -755,7 +908,7 @@ function setupIndividualLookupSheet(ss) {
 
   sheet.getRange('A4').setValue('Total Hours').setFontWeight('bold');
   sheet.getRange('B4').setFormula(
-    '=IF(B2="","",SUMIFS(ActivityLog!F:F,ActivityLog!N:N,B2,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6))'
+    '=IF(B2="","",SUMIFS(ActivityLog!Z:Z,ActivityLog!N:N,B2,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6))'
   );
   sheet.getRange('C4').setValue('Total Cost').setFontWeight('bold');
   sheet.getRange('D4').setFormula(
@@ -829,7 +982,9 @@ function setupIndividualLookupSheet(ss) {
     'tNums,INDEX(raw,,1),' +
     'tIds,INDEX(raw,,2),' +
     'subjs,MAP(tIds,LAMBDA(id,IFERROR(INDEX(RawData!C:C,MATCH(id,RawData!A:A,0)),""))),'+
-    'dates,TEXT(INDEX(raw,,3),"M/D/YYYY"),' +
+    // MAP so TEXT() applies per row and the date column spills (a bare
+    // TEXT(INDEX(raw,,3),...) returns only a scalar -> dates appeared on row 1 only).
+    'dates,MAP(INDEX(raw,,3),LAMBDA(d,IF(d="","",TEXT(d,"M/D/YYYY")))),' +
     'HSTACK(tNums,subjs,dates,INDEX(raw,,{4,5,6,7,8}))' +
     '),"No activity entries found for this individual in the selected date range."))';
 
@@ -849,7 +1004,7 @@ function setupIndividualLookupSheet(ss) {
     'ids,UNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!N2:N=B2,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
     'nums,BYROW(ids,LAMBDA(id,IFERROR(INDEX(ActivityLog!C:C,MATCH(id,ActivityLog!B:B,0)),"?"))),' +
     'subjs,BYROW(ids,LAMBDA(id,IFERROR(INDEX(RawData!C:C,MATCH(id,RawData!A:A,0)),"?"))),' +
-    'hours,BYROW(ids,LAMBDA(id,SUMIFS(ActivityLog!F:F,ActivityLog!B:B,id,ActivityLog!N:N,B2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'hours,BYROW(ids,LAMBDA(id,SUMIFS(ActivityLog!Z:Z,ActivityLog!B:B,id,ActivityLog!N:N,B2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'cost,BYROW(ids,LAMBDA(id,SUMIFS(ActivityLog!H:H,ActivityLog!B:B,id,ActivityLog!N:N,B2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'entries,BYROW(ids,LAMBDA(id,COUNTIFS(ActivityLog!B:B,id,ActivityLog!N:N,B2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'SORT(HSTACK(nums,subjs,hours,cost,entries),3,FALSE)' +
@@ -909,8 +1064,15 @@ function setupByIssueCategorySheet(ss) {
   const formula = '=LET(' +
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
-    'cats,UNIQUE(FILTER(ActivityLog!V2:V,ActivityLog!V2:V<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
-    'hours,BYROW(cats,LAMBDA(c,SUMIFS(ActivityLog!F:F,ActivityLog!V:V,c,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    // Case-insensitive de-dup: UNIQUE/FILTER are case-SENSITIVE (so "Issue Not
+    // Listed" and "Issue not listed" would list as two rows) but SUMIFS is
+    // case-INSENSITIVE (sums both into each), which double-counted the total.
+    // Uppercase each category (via MAP — UPPER() alone is NOT array-aware and
+    // returns only the first cell), then UNIQUE so case-variants collapse to one
+    // row; SUMIFS matches all variants into it. (Labels show uppercase — the real
+    // fix is normalizing category capitalization in iiQ.)
+    'cats,UNIQUE(MAP(FILTER(ActivityLog!V2:V,ActivityLog!V2:V<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD),LAMBDA(x,UPPER(x)))),' +
+    'hours,BYROW(cats,LAMBDA(c,SUMIFS(ActivityLog!Z:Z,ActivityLog!V:V,c,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'cost,BYROW(cats,LAMBDA(c,SUMIFS(ActivityLog!H:H,ActivityLog!V:V,c,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'entries,BYROW(cats,LAMBDA(c,COUNTIFS(ActivityLog!V:V,c,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'tickets,BYROW(cats,LAMBDA(c,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!V2:V=c,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
@@ -935,7 +1097,7 @@ function setupByIssueTypeSheet(ss) {
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
     'types,UNIQUE(FILTER(ActivityLog!X2:X,ActivityLog!X2:X<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
-    'hours,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!F:F,ActivityLog!X:X,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'hours,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!Z:Z,ActivityLog!X:X,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'cost,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!H:H,ActivityLog!X:X,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'entries,BYROW(types,LAMBDA(t,COUNTIFS(ActivityLog!X:X,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'tickets,BYROW(types,LAMBDA(t,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!X2:X=t,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
@@ -964,14 +1126,14 @@ function setupAgentByCategorySheet(ss) {
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
 
-  // Col14=PerformedByUser(N), Col22=IssueCategoryName(V), Col6=EffortHours(F), Col8=LaborCost(H), Col1=ActivityId(A)
+  // Col14=PerformedByUser(N), Col22=IssueCategoryName(V), Col26=NetHours(Z), Col8=LaborCost(H), Col1=ActivityId(A)
   const formula = '=IFERROR(LET(' +
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
     'dateClause,' + buildDateClause_() + ',' +
-    'QUERY(ActivityLog!A2:X,' +
-    '"select Col14,Col22,sum(Col6),sum(Col8),count(Col1) where Col14 is not null and Col22 is not null and"&dateClause&' +
-    '" group by Col14,Col22 order by Col14,sum(Col6) desc label sum(Col6) \'\',sum(Col8) \'\',count(Col1) \'\'"' +
+    'QUERY(ActivityLog!A2:Z,' +
+    '"select Col14,Col22,sum(Col26),sum(Col8),count(Col1) where Col14 is not null and Col22 is not null and"&dateClause&' +
+    '" group by Col14,Col22 order by Col14,sum(Col26) desc label sum(Col26) \'\',sum(Col8) \'\',count(Col1) \'\'"' +
     ',0)),"No data found for the selected date range.")';
 
   sheet.getRange(2, 1).setFormula(formula);
@@ -988,14 +1150,14 @@ function setupTeamByCategorySheet(ss) {
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
 
-  // Col18=TeamName(R), Col22=IssueCategoryName(V)
+  // Col18=TeamName(R), Col22=IssueCategoryName(V), Col26=NetHours(Z)
   const formula = '=IFERROR(LET(' +
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
     'dateClause,' + buildDateClause_() + ',' +
-    'QUERY(ActivityLog!A2:X,' +
-    '"select Col18,Col22,sum(Col6),sum(Col8),count(Col1) where Col18 is not null and Col22 is not null and"&dateClause&' +
-    '" group by Col18,Col22 order by Col18,sum(Col6) desc label sum(Col6) \'\',sum(Col8) \'\',count(Col1) \'\'"' +
+    'QUERY(ActivityLog!A2:Z,' +
+    '"select Col18,Col22,sum(Col26),sum(Col8),count(Col1) where Col18 is not null and Col22 is not null and"&dateClause&' +
+    '" group by Col18,Col22 order by Col18,sum(Col26) desc label sum(Col26) \'\',sum(Col8) \'\',count(Col1) \'\'"' +
     ',0)),"No data found for the selected date range.")';
 
   sheet.getRange(2, 1).setFormula(formula);
@@ -1036,14 +1198,14 @@ function setupLocationByCategorySheet(ss) {
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
 
-  // Col20=LocationName(T), Col22=IssueCategoryName(V)
+  // Col20=LocationName(T), Col22=IssueCategoryName(V), Col26=NetHours(Z)
   const formula = '=IFERROR(LET(' +
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
     'dateClause,' + buildDateClause_() + ',' +
-    'QUERY(ActivityLog!A2:X,' +
-    '"select Col20,Col22,sum(Col6),sum(Col8),count(Col1) where Col20 is not null and Col22 is not null and"&dateClause&' +
-    '" group by Col20,Col22 order by Col20,sum(Col6) desc label sum(Col6) \'\',sum(Col8) \'\',count(Col1) \'\'"' +
+    'QUERY(ActivityLog!A2:Z,' +
+    '"select Col20,Col22,sum(Col26),sum(Col8),count(Col1) where Col20 is not null and Col22 is not null and"&dateClause&' +
+    '" group by Col20,Col22 order by Col20,sum(Col26) desc label sum(Col26) \'\',sum(Col8) \'\',count(Col1) \'\'"' +
     ',0)),"No data found for the selected date range.")';
 
   sheet.getRange(2, 1).setFormula(formula);
@@ -1065,7 +1227,7 @@ function setupAgentPivotSheet(ss) {
 
   // Sort By dropdown — column names matching row 2 headers
   const sortByRule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(['Agent', 'Team', 'Standard', 'Travel', 'Overtime', 'Weekend', 'Total Hours'], true)
+    .requireValueInList(['Agent', 'Team', 'Standard', 'Travel', 'Overtime', 'Weekend', 'Other', 'Total Hours'], true)
     .build();
   sheet.getRange('B1').setDataValidation(sortByRule);
 
@@ -1076,14 +1238,17 @@ function setupAgentPivotSheet(ss) {
   sheet.getRange('D1').setDataValidation(orderRule);
 
   // Row 2: Headers — labor type names reference ActivityLog!J (LaborTypeName).
-  // Adjust C2:F2 to match your district's labor type names.
-  const headers = ['Agent', 'Team', 'Standard', 'Travel', 'Overtime', 'Weekend', 'Total Hours'];
+  // Adjust C2:F2 to match your district's labor type names. "Other" captures
+  // de-duplicated hours not attributed to those four labor types (e.g. action-only
+  // tickets that carry no labor type) so C+D+E+F+G reconcile to the Total.
+  const headers = ['Agent', 'Team', 'Standard', 'Travel', 'Overtime', 'Weekend', 'Other', 'Total Hours'];
   sheet.getRange(2, 1, 1, headers.length).setValues([headers]);
   sheet.getRange(2, 1, 1, headers.length).setFontWeight('bold');
 
   // Formula references header cells ($C$2..$F$2) so users can rename labor types
-  // without editing the formula. Each column SUMIFs where LaborTypeName matches
-  // the header text. Total is all hours regardless of type.
+  // without editing the formula. Each labor-type column SUMIFs raw EffortHours
+  // (labor rows == NetHours). Total sums NetHours (de-duplicated). "Other" is the
+  // remainder so the type columns + Other always equal the Total.
   // Sort column determined by SWITCH on $B$1, sort direction by $D$1.
   const formula = '=LET(' +
     'startD,DateFilters!$B$5,' +
@@ -1094,10 +1259,11 @@ function setupAgentPivotSheet(ss) {
     'trvH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$D$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'otH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$E$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'wkndH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$F$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'total,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'sCol,SWITCH($B$1,"Agent",1,"Team",2,$C$2,3,$D$2,4,$E$2,5,$F$2,6,7),' +
+    'total,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!Z:Z,ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'other,MAP(total,stdH,trvH,otH,wkndH,LAMBDA(t,s,r,o,w,t-s-r-o-w)),' +
+    'sCol,SWITCH($B$1,"Agent",1,"Team",2,$C$2,3,$D$2,4,$E$2,5,$F$2,6,"Other",7,8),' +
     'sAsc,$D$1="Ascending",' +
-    'SORT(IFERROR(HSTACK(users,teams,stdH,trvH,otH,wkndH,total),0),sCol,sAsc)' +
+    'SORT(IFERROR(HSTACK(users,teams,stdH,trvH,otH,wkndH,other,total),0),sCol,sAsc)' +
     ')';
 
   sheet.getRange(3, 1).setFormula(formula);
@@ -1105,7 +1271,7 @@ function setupAgentPivotSheet(ss) {
   sheet.setColumnWidth(1, 200);
   sheet.setColumnWidth(2, 180);
   sheet.setFrozenRows(2);
-  formatSheetColumns(sheet, 3, [['C', FMT_DECIMAL], ['D', FMT_DECIMAL], ['E', FMT_DECIMAL], ['F', FMT_DECIMAL], ['G', FMT_DECIMAL]]);
+  formatSheetColumns(sheet, 3, [['C', FMT_DECIMAL], ['D', FMT_DECIMAL], ['E', FMT_DECIMAL], ['F', FMT_DECIMAL], ['G', FMT_DECIMAL], ['H', FMT_DECIMAL]]);
   return true;
 }
 
@@ -1158,7 +1324,7 @@ function setupDashboardSheet(ss) {
   sheet.getRange(1, 1, 1, 2).setFontWeight('bold');
 
   sheet.getRange('B2').setFormula('=TEXT(DateFilters!B5,"MMM D, YYYY")&" - "&TEXT(DateFilters!B6,"MMM D, YYYY")');
-  sheet.getRange('B3').setFormula('=SUMIFS(ActivityLog!F:F,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6)');
+  sheet.getRange('B3').setFormula('=SUMIFS(ActivityLog!Z:Z,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6)');
   sheet.getRange('B4').setFormula('=SUMIFS(ActivityLog!H:H,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6)');
   sheet.getRange('B5').setFormula('=IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6)),0)');
   sheet.getRange('B6').setFormula('=IF(B5>0,B3/B5,0)');
@@ -1194,24 +1360,24 @@ function setupYearSummarySheet(ss) {
     'empty,CHOOSE({1,2,3,4,5,6,7},"","","","","","",""),' +
 
     'teamResult,IFERROR(LET(' +
-      'agg,QUERY(ActivityLog!A2:T,"select year(Col4),month(Col4)+1,Col18,sum(Col6),sum(Col8),count(Col6) where Col18 is not null and"&dateClause&" group by year(Col4),month(Col4)+1,Col18",0),' +
-      'mo,ARRAYFORMULA(TEXT(INDEX(agg,,1),"0")&"-"&TEXT(INDEX(agg,,2),"00")),' +
-      'HSTACK(ARRAYFORMULA(IF(mo<>"",label,"")),ARRAYFORMULA(IF(mo<>"","Team","")),mo,INDEX(agg,,3),INDEX(agg,,4),INDEX(agg,,5),INDEX(agg,,6))),empty),' +
+      'agg,QUERY(ActivityLog!A2:Z,"select year(Col4),month(Col4)+1,Col18,sum(Col26),sum(Col8),count(Col6) where Col18 is not null and"&dateClause&" group by year(Col4),month(Col4)+1,Col18",0),' +
+      'mo,MAP(INDEX(agg,,1),INDEX(agg,,2),LAMBDA(y,m,TEXT(y,"0")&"-"&TEXT(m,"00"))),' +
+      'HSTACK(MAP(mo,LAMBDA(x,IF(x<>"",label,""))),MAP(mo,LAMBDA(x,IF(x<>"","Team",""))),mo,INDEX(agg,,3),INDEX(agg,,4),INDEX(agg,,5),INDEX(agg,,6))),empty),' +
 
     'agentResult,IFERROR(LET(' +
-      'agg,QUERY(ActivityLog!A2:T,"select year(Col4),month(Col4)+1,Col14,sum(Col6),sum(Col8),count(Col6) where Col14 is not null and"&dateClause&" group by year(Col4),month(Col4)+1,Col14",0),' +
-      'mo,ARRAYFORMULA(TEXT(INDEX(agg,,1),"0")&"-"&TEXT(INDEX(agg,,2),"00")),' +
-      'HSTACK(ARRAYFORMULA(IF(mo<>"",label,"")),ARRAYFORMULA(IF(mo<>"","Agent","")),mo,INDEX(agg,,3),INDEX(agg,,4),INDEX(agg,,5),INDEX(agg,,6))),empty),' +
+      'agg,QUERY(ActivityLog!A2:Z,"select year(Col4),month(Col4)+1,Col14,sum(Col26),sum(Col8),count(Col6) where Col14 is not null and"&dateClause&" group by year(Col4),month(Col4)+1,Col14",0),' +
+      'mo,MAP(INDEX(agg,,1),INDEX(agg,,2),LAMBDA(y,m,TEXT(y,"0")&"-"&TEXT(m,"00"))),' +
+      'HSTACK(MAP(mo,LAMBDA(x,IF(x<>"",label,""))),MAP(mo,LAMBDA(x,IF(x<>"","Agent",""))),mo,INDEX(agg,,3),INDEX(agg,,4),INDEX(agg,,5),INDEX(agg,,6))),empty),' +
 
     'laborResult,IFERROR(LET(' +
-      'agg,QUERY(ActivityLog!A2:T,"select year(Col4),month(Col4)+1,Col10,sum(Col6),sum(Col8),count(Col6) where Col10 is not null and"&dateClause&" group by year(Col4),month(Col4)+1,Col10",0),' +
-      'mo,ARRAYFORMULA(TEXT(INDEX(agg,,1),"0")&"-"&TEXT(INDEX(agg,,2),"00")),' +
-      'HSTACK(ARRAYFORMULA(IF(mo<>"",label,"")),ARRAYFORMULA(IF(mo<>"","LaborType","")),mo,INDEX(agg,,3),INDEX(agg,,4),INDEX(agg,,5),INDEX(agg,,6))),empty),' +
+      'agg,QUERY(ActivityLog!A2:Z,"select year(Col4),month(Col4)+1,Col10,sum(Col26),sum(Col8),count(Col6) where Col10 is not null and"&dateClause&" group by year(Col4),month(Col4)+1,Col10",0),' +
+      'mo,MAP(INDEX(agg,,1),INDEX(agg,,2),LAMBDA(y,m,TEXT(y,"0")&"-"&TEXT(m,"00"))),' +
+      'HSTACK(MAP(mo,LAMBDA(x,IF(x<>"",label,""))),MAP(mo,LAMBDA(x,IF(x<>"","LaborType",""))),mo,INDEX(agg,,3),INDEX(agg,,4),INDEX(agg,,5),INDEX(agg,,6))),empty),' +
 
     'resResult,IFERROR(LET(' +
       'agg,QUERY(ActivityLog!A2:T,"select year(Col4),month(Col4)+1,Col12,sum(Col6),sum(Col8),count(Col6) where Col12 is not null and"&dateClause&" group by year(Col4),month(Col4)+1,Col12",0),' +
-      'mo,ARRAYFORMULA(TEXT(INDEX(agg,,1),"0")&"-"&TEXT(INDEX(agg,,2),"00")),' +
-      'HSTACK(ARRAYFORMULA(IF(mo<>"",label,"")),ARRAYFORMULA(IF(mo<>"","Resolution","")),mo,INDEX(agg,,3),INDEX(agg,,4),INDEX(agg,,5),INDEX(agg,,6))),empty),' +
+      'mo,MAP(INDEX(agg,,1),INDEX(agg,,2),LAMBDA(y,m,TEXT(y,"0")&"-"&TEXT(m,"00"))),' +
+      'HSTACK(MAP(mo,LAMBDA(x,IF(x<>"",label,""))),MAP(mo,LAMBDA(x,IF(x<>"","Resolution",""))),mo,INDEX(agg,,3),INDEX(agg,,4),INDEX(agg,,5),INDEX(agg,,6))),empty),' +
 
     'combined,VSTACK(teamResult,agentResult,laborResult,resResult),' +
     'FILTER(combined,INDEX(combined,,4)<>"")' +
@@ -1283,6 +1449,7 @@ function regenerateAnalyticsSheets() {
   setupDashboardSheet(ss);
   setupYearSummarySheet(ss);
   reorderSheets(ss);
+  applyBrandTheme_(ss);
   logOperation('SETUP', 'SUCCESS', 'Regenerated all analytics sheets');
 }
 

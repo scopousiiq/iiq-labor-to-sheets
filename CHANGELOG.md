@@ -1,12 +1,34 @@
 # Changelog
 
+## 2026-06-23 — v1.1.0
+
+### Fixed
+- **Labor time was double-counted in the hours reports.** For many tickets, iiQ stores the same work twice — once as a resolution *action* and once as a *labor* entry, each carrying the same hours — so the rollups added it up twice. The ActivityLog sheet now has a de-duplicated **NetHours** column plus an **EntryType** column marking each row `Action` or `Labor`. When a ticket has any labor entry, only its labor hours count; otherwise its action hours count — so each ticket's time is counted exactly once. Every hours rollup (ByTeam, ByIndividual, ByDepartment, ByIssueCategory, ByIssueType, AgentByCategory, TeamByCategory, LocationByCategory, AgentPivot total, Dashboard, IndividualLookup, YearSummary) now uses NetHours. ByLaborType, CategoryByLaborType, and ByResolution stay single-type views (labor-only / action-only) by design and are not expected to equal the de-duplicated total.
+- **Team was attributed to the technician's home team instead of the ticket's team.** Activity rows now use the ticket's assigned team, falling back to the performing user's team when the ticket has no team assigned.
+- **"System Service" time was not credited to a technician.** Time logged under the iiQ System Service automation account is re-attributed to the ticket's assigned user.
+- **Report totals did not reconcile across breakdowns.** Rows with a blank team, location, category, or issue type were dropped from their breakdown; they now appear under a visible **(Unassigned)** bucket, so every full breakdown sums to the same total.
+- **ByIssueCategory over-counted, and could collapse to a single row,** when a category's capitalization varied (e.g. "Issue Not Listed" vs "Issue not listed"). Capitalization variants are now merged into one row with a correct total. (Standardizing category names in iiQ is the cleaner long-term fix.)
+- **IndividualLookup** — the Activity Date column only filled the first detail row; it now fills every row.
+- **AgentPivot** — the per-labor-type columns did not add up to the Total; a new **Other** column captures hours that have no labor type, so the columns reconcile to the Total.
+
+### Added
+- **EntryType and NetHours columns** on the ActivityLog sheet.
+- **Recompute Net Hours** and **Repair Team Attribution** (Troubleshooting menu) — apply the de-duplication and team rules to an already-loaded sheet without a full reload.
+- **Send Telemetry Ping (Debug)** (Troubleshooting menu) — sends a single anonymous usage ping; honors the `TELEMETRY_ENABLED` opt-out.
+
+### Changed
+- **iiQ brand styling** applied across all tabs — colored header rows, zebra banding, tab colors, hero banners on the Dashboard and Instructions, and hidden gridlines on the report tabs.
+- **Menu renamed to "iiQ Labor"** (from "iiQ Data") and reorganized — a top-level **Continue Loading**, **Open Dashboard**, a **Labor Data** submenu, and a tidier Setup and Troubleshooting layout.
+- **Instructions sheet** updated for the new menu and styling, with added **Dashboard Integration** (Looker Studio / Power BI) and **Support** sections.
+- **YearSummary** monthly rollup reworked for more reliable formula expansion.
+
 ## 2026-05-26
 
 ### Changed
 - **BEARER_TOKEN documentation** (`README.md`, `Setup.gs`) — Updated "where to find your API token" guidance from "Admin > Integrations > API" to "Admin > Developer Tools" to match the current iiQ admin UI.
 
 ### Added
-- **Anonymous usage telemetry** (`scripts/Telemetry.gs`, `Config.gs`, `Triggers.gs`, `DataOrchestrator.gs`, `Setup.gs`) — Ported the canonical pattern from `iiq-tickets-to-sheets`. One ping per successful trigger refresh to the iiQ-owned aggregator; payload is install ID (UUID), project slug, version, iiQ hostname, ActivityLog row count, and the names of canonical analytics sheets present. No labor data, tokens, user names, or custom sheet names are sent. `enforceTelemetryGate()` runs at the head of every trigger-fired function (`triggerDataLoadMonitor`, `triggerDailyOpenRefresh`) and auto-uninstalls all CLOCK triggers if `TELEMETRY_ENABLED` is not TRUE. `assertTelemetryEnabledForTriggers()` blocks `setupDefaultTriggers` / `ensureMonitorTrigger` when telemetry is off. `reportTelemetry()` runs at the tail of each successful trigger.
+- **Anonymous usage telemetry** (`scripts/Telemetry.gs`, `Config.gs`, `Triggers.gs`, `DataOrchestrator.gs`, `Setup.gs`) — One ping per successful trigger refresh to the iiQ-owned aggregator; payload is install ID (UUID), project slug, version, iiQ hostname, ActivityLog row count, and the names of the standard analytics sheets present. No labor data, tokens, user names, or custom sheet names are sent. `enforceTelemetryGate()` runs at the head of every trigger-fired function (`triggerDataLoadMonitor`, `triggerDailyOpenRefresh`) and auto-uninstalls all CLOCK triggers if `TELEMETRY_ENABLED` is not TRUE. `assertTelemetryEnabledForTriggers()` blocks `setupDefaultTriggers` / `ensureMonitorTrigger` when telemetry is off. `reportTelemetry()` runs at the tail of each successful trigger.
 - **Remote version check** (`Config.gs`, `Menu.gs`, `version.json`) — Added `SCRIPT_VERSION` constant (1.0.0), `version.json` at repo root, and `checkForUpdates()` that fetches the remote `version.json` from GitHub, compares semver, and writes `SCRIPT_VERSION`/`LATEST_VERSION`/`VERSION_CHECK_DATE` to the Config sheet (with yellow/green background to signal update available vs. up to date). New menu item: `iiQ Data → Setup → Check for Updates`.
 - **Config sheet seeding** (`Setup.gs`) — `setupConfigSheet` now writes `SCRIPT_VERSION`, `LATEST_VERSION`, `VERSION_CHECK_DATE`, and `TELEMETRY_ENABLED=TRUE` rows on fresh install. Instructions sheet gets a new "Anonymous Usage Telemetry" section describing exactly what is and isn't sent, plus the opt-out instructions.
 

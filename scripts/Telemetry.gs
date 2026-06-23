@@ -74,7 +74,10 @@ const TELEMETRY_SCHEMA_VERSION = 1;
  * Send one telemetry ping. Call at the tail of a trigger-fired function,
  * after the refresh completes successfully. Best-effort: never throws.
  */
-function reportTelemetry() {
+// `force` (used only by the debug menu ping) bypasses the trigger-presence
+// check so a district can test connectivity before installing triggers. It does
+// NOT bypass the TELEMETRY_ENABLED opt-out — that gate is always honored.
+function reportTelemetry(force) {
   try {
     const url = (typeof TELEMETRY_URL === 'string' ? TELEMETRY_URL : '').trim();
     if (!url) return;
@@ -85,7 +88,7 @@ function reportTelemetry() {
     const hasTimeTrigger = ScriptApp.getProjectTriggers().some(function (t) {
       return t.getEventType() === ScriptApp.EventType.CLOCK;
     });
-    if (!hasTimeTrigger) return;
+    if (!force && !hasTimeTrigger) return;
 
     const instanceUrl = telemetryExtractHostname_(cfg.API_BASE_URL);
     if (!instanceUrl) return;

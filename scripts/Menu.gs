@@ -5,32 +5,40 @@
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
 
-  ui.createMenu('iiQ Data')
+  ui.createMenu('iiQ Labor')
+    .addItem('▶ Continue Loading', 'executeNextLoad')
     .addItem('Check Status', 'showLoadStatus')
-    .addItem('View Dashboard', 'openDashboard')
+    .addItem('Open Dashboard', 'openDashboard')
     .addSeparator()
     .addSubMenu(ui.createMenu('Setup')
       .addItem('Run Complete Setup', 'setupLaborTrackerDashboard')
       .addItem('Regenerate Analytics Sheets', 'regenerateAnalyticsSheetsWithConfirm')
-      .addItem('Test API Connection', 'showApiTestResult')
       .addItem('Verify Configuration', 'showConfigStatus')
-      .addItem('Check for Updates', 'menuCheckForUpdates')
+      .addItem('Test API Connection', 'showApiTestResult')
       .addSeparator()
       .addItem('Setup Automated Triggers', 'setupDefaultTriggers')
+      .addItem('View Trigger Status', 'showAutomationStatus')
       .addItem('Remove Automated Triggers', 'removeAllTriggers')
-      .addItem('View Trigger Status', 'showAutomationStatus'))
-    .addSubMenu(ui.createMenu('Load Data')
+      .addSeparator()
+      .addItem('Check for Updates', 'menuCheckForUpdates'))
+    .addSubMenu(ui.createMenu('Labor Data')
       .addItem('Start Initial Load', 'startInitialLoad')
-      .addItem('Continue Loading', 'executeNextLoad')
+      .addItem('Open Ticket Refresh', 'startOpenRefresh')
       .addItem('Refresh Reference Data', 'menuRefreshReferenceData')
       .addItem('Refresh Labor Types', 'menuRefreshLaborTypes')
-      .addItem('Open Ticket Refresh', 'startOpenRefresh'))
+      .addSeparator()
+      .addItem('Show Status', 'showLoadStatus'))
     .addSubMenu(ui.createMenu('Troubleshooting')
       .addItem('Validate Data', 'showValidationResults')
       .addItem('Backfill Missing User Names', 'menuBackfillMissingUserNames')
+      .addItem('Recompute Net Hours', 'menuRecomputeNetHours')
+      .addItem('Repair Team Attribution', 'menuRepairTeamAttribution')
+      .addSeparator()
       .addItem('View Logs', 'showLogs')
       .addItem('Reset Load States', 'resetLoadStatesWithConfirm')
-      .addItem('Full Reload (Clear Data)', 'startFullReloadWithConfirm'))
+      .addItem('Full Reload (Clear Data)', 'startFullReloadWithConfirm')
+      .addSeparator()
+      .addItem('Send Telemetry Ping (Debug)', 'menuSendTelemetryPing'))
     .addToUi();
 }
 
@@ -166,6 +174,59 @@ function menuBackfillMissingUserNames() {
   } finally {
     releaseScriptLock(lock);
   }
+}
+
+// Recomputes the de-duplicated NetHours column (and EntryType) for every
+// ActivityLog row. Useful after manually editing data, or to repair an older
+// sheet loaded before NetHours existed, without a full reload.
+function menuRecomputeNetHours() {
+  const ui = SpreadsheetApp.getUi();
+  const lock = acquireScriptLock();
+  if (!lock) { showOperationBusyMessage('Recompute Net Hours'); return; }
+  try {
+    const rows = computeNetHours();
+    ui.alert('Done', 'Recomputed EntryType/NetHours for ' + rows + ' ActivityLog row(s).', ui.ButtonSet.OK);
+  } catch (e) {
+    logOperation('NET_HOURS', 'ERROR', e.message);
+    ui.alert('Recompute Failed', e.message, ui.ButtonSet.OK);
+  } finally {
+    releaseScriptLock(lock);
+  }
+}
+
+// Recomputes ActivityLog Team (cols Q/R) in place using the hybrid rule
+// (ticket's assigned team, else the performing user's team, else "(Unassigned)").
+// Lets an already-loaded sheet adopt the team-attribution fix without a reload.
+function menuRepairTeamAttribution() {
+  const ui = SpreadsheetApp.getUi();
+  const lock = acquireScriptLock();
+  if (!lock) { showOperationBusyMessage('Repair Team Attribution'); return; }
+  try {
+    const rows = repairTeamAttribution();
+    ui.alert('Done', 'Repaired team attribution for ' + rows + ' ActivityLog row(s).', ui.ButtonSet.OK);
+  } catch (e) {
+    logOperation('TEAM_REPAIR', 'ERROR', e.message);
+    ui.alert('Repair Failed', e.message, ui.ButtonSet.OK);
+  } finally {
+    releaseScriptLock(lock);
+  }
+}
+
+// Sends a one-off anonymous usage ping for debugging telemetry connectivity.
+// Honors the TELEMETRY_ENABLED opt-out (no-op if FALSE); bypasses only the
+// trigger-presence check so it works before triggers are installed.
+function menuSendTelemetryPing() {
+  const ui = SpreadsheetApp.getUi();
+  const lock = acquireScriptLock();
+  if (!lock) { showOperationBusyMessage('Send Telemetry Ping'); return; }
+  try {
+    reportTelemetry(true);
+    ui.alert('Telemetry Ping Sent',
+      'A debug ping was attempted. It only sends if TELEMETRY_ENABLED is TRUE in the Config sheet. ' +
+      'No ticket/labor data, tokens, or user names are included — see the Anonymous Usage Telemetry ' +
+      'section of the Instructions sheet. Check Logs for details.',
+      ui.ButtonSet.OK);
+  } finally { releaseScriptLock(lock); }
 }
 
 function resetLoadStatesWithConfirm() {

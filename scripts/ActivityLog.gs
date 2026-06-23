@@ -88,6 +88,13 @@ function loadActivitiesInitial() {
   writeConfigValueDirect('ACTIVITY_TICKET_INDEX', '');
   updateLastSync();
 
+  // De-duplicate action/labor effort into NetHours now that every row is loaded.
+  try {
+    computeNetHours();
+  } catch (e) {
+    logOperation('NET_HOURS', 'ERROR', 'NetHours computation failed: ' + e.message);
+  }
+
   // Run post-load validation and trigger reconcile if needed
   try {
     validateAndTriggerReconcile();
@@ -116,6 +123,13 @@ function refreshActivitiesForTickets(ticketIds) {
   for (let i = 0; i < ticketIds.length; i += batchSize) {
     const batchIds = ticketIds.slice(i, i + batchSize);
     loadActivitiesBatch(batchIds, 0, actSheet, activityIndex, ticketMap, userMap, laborMap, resolutionMap, Date.now());
+  }
+
+  // Refreshed rows may have changed a ticket's action/labor mix — recompute NetHours.
+  try {
+    computeNetHours();
+  } catch (e) {
+    logOperation('NET_HOURS', 'ERROR', 'NetHours computation failed: ' + e.message);
   }
 }
 
@@ -275,7 +289,28 @@ function buildActivityRow(item, entry, ticketId, ticketContext, userMap, laborMa
   const laborName = item.LaborTypeName || (item.LaborType ? item.LaborType.Name : '') || laborMap[laborTypeId] || '';
   const resolutionName = item.ResolutionAction || resolutionMap[resolutionId] || '';
 
-  const userName = user.name || item.ByUserName || item.ByUser || '';
+  let userName = user.name || item.ByUserName || item.ByUser || '';
+  let effectiveUserId = userId;
+
+  // Attribution: rows logged under the "System Service" automation account carry
+  // no real technician. Re-attribute them to the ticket's assigned user so the
+  // work counts toward a person rather than the service account.
+  if (isSystemServiceName_(userName) && ticketContext.assignedUserName) {
+    userName = ticketContext.assignedUserName;
+    effectiveUserId = ticketContext.assignedUserId || userId;
+  }
+
+  // EntryType distinguishes the two records iiQ returns for the same work:
+  // a labor entry (has LaborType) vs. a resolution action (has ResolutionAction).
+  const entryType = laborTypeId ? 'Labor' : 'Action';
+
+  // Team: prefer the ticket's assigned team, then fall back to the performing
+  // user's team. Only ~17% of tickets carry an assigned team but ~99% have a
+  // user, so a ticket-only rule would drop most hours from ByTeam. Coalesce a
+  // missing team to UNASSIGNED so the row is bucketed, never silently dropped.
+  const teamSource = userMap[effectiveUserId] || user || {};
+  const teamId = ticketContext.assignedTeamId || teamSource.teamId || '';
+  const teamName = ticketContext.assignedTeamName || teamSource.teamName || UNASSIGNED;
 
   return [
     activityId,
@@ -290,19 +325,131 @@ function buildActivityRow(item, entry, ticketId, ticketContext, userMap, laborMa
     laborName,
     resolutionId,
     resolutionName,
-    userId,
+    effectiveUserId,
     userName,
     item.Notes || '',
     item.IsPublic === true ? 1 : 0,
-    user.teamId || '',
-    user.teamName || '',
+    teamId,
+    teamName,
     ticketContext.locationId || '',
-    ticketContext.locationName || '',
+    // Coalesce dimension labels so blanks bucket under UNASSIGNED and every
+    // full breakdown (ByTeam/ByDepartment/ByIssueCategory/ByIssueType) reconciles
+    // to the same total. (PerformedByUser is intentionally NOT coalesced — blank
+    // names are repaired by the Backfill Missing User Names tool instead.)
+    ticketContext.locationName || UNASSIGNED,
     ticketContext.issueCategoryId || '',
-    ticketContext.issueCategoryName || '',
+    ticketContext.issueCategoryName || UNASSIGNED,
     ticketContext.issueTypeId || '',
-    ticketContext.issueTypeName || ''
+    ticketContext.issueTypeName || UNASSIGNED,
+    entryType,
+    0  // NetHours placeholder — filled by computeNetHours() after the full load.
   ];
+}
+
+// Bucket label for rows whose team/location/category/issue-type is blank, so the
+// row still appears in (and counts toward the total of) every full breakdown.
+const UNASSIGNED = '(Unassigned)';
+
+// Names treated as the iiQ system/automation account (not a real technician).
+// Activity rows under these names are re-attributed to the ticket's assigned user.
+const SYSTEM_SERVICE_NAMES = ['System Service'];
+
+function isSystemServiceName_(name) {
+  if (!name) return false;
+  return SYSTEM_SERVICE_NAMES.indexOf(String(name).trim()) !== -1;
+}
+
+// Recomputes EntryType (col Y) and NetHours (col Z) for every ActivityLog row.
+//
+// iiQ records the same work twice for many tickets: once as a resolution Action
+// (carries effort) and once as a Labor entry (carries the same effort). Summing
+// raw EffortHours double-counts. NetHours de-duplicates with a per-ticket rule:
+//   - If a ticket has ANY labor entry, only its Labor rows count (Action rows -> 0).
+//   - If a ticket has no labor entry, its Action rows count (legacy behaviour
+//     before the district started logging labor mid-year).
+// This counts every ticket's work exactly once and loses no tickets. All hours
+// rollups sum NetHours; the labor-type / resolution breakdowns keep using raw
+// EffortHours because they are already scoped to a single record type.
+//
+// Runs as a full-sheet pass AFTER the activity load completes, because a ticket's
+// Action and Labor rows can arrive on different pages of the paginated load.
+function computeNetHours() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('ActivityLog');
+  if (!sheet) return 0;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+  const n = lastRow - 1;
+
+  const ticketIds = sheet.getRange(2, 2, n, 1).getValues();     // col B  TicketId
+  const effortHours = sheet.getRange(2, 6, n, 1).getValues();   // col F  EffortHours
+  const laborTypeIds = sheet.getRange(2, 9, n, 1).getValues();  // col I  LaborTypeId
+
+  // Pass 1: flag tickets that have at least one labor row.
+  const ticketHasLabor = {};
+  for (let r = 0; r < n; r++) {
+    if (String(laborTypeIds[r][0] || '').trim()) {
+      ticketHasLabor[ticketIds[r][0]] = true;
+    }
+  }
+
+  // Pass 2: derive EntryType + NetHours per row.
+  const out = new Array(n);
+  for (let r = 0; r < n; r++) {
+    const isLaborRow = !!String(laborTypeIds[r][0] || '').trim();
+    const eff = Number(effortHours[r][0]) || 0;
+    const net = ticketHasLabor[ticketIds[r][0]] ? (isLaborRow ? eff : 0) : eff;
+    out[r] = [isLaborRow ? 'Labor' : 'Action', net];
+  }
+
+  // Write EntryType (col 25 = Y) and NetHours (col 26 = Z) together.
+  sheet.getRange(2, 25, n, 2).setValues(out);
+  SpreadsheetApp.flush();
+  logOperation('NET_HOURS', 'INFO', 'Recomputed EntryType/NetHours for ' + n + ' rows.');
+  return n;
+}
+
+// Rewrites ActivityLog Team (cols Q/R) for every row in place, applying the same
+// hybrid rule as buildActivityRow: ticket's AssignedTeam (RawData) else the
+// performing user's team (Users sheet), coalescing blanks to UNASSIGNED. No API
+// calls — lets an already-loaded sheet pick up the team-attribution fix without a
+// full reload. Returns the number of rows updated.
+function repairTeamAttribution() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('ActivityLog');
+  const rawSheet = ss.getSheetByName('RawData');
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+
+  // ticketId -> {teamId, teamName} from RawData
+  const ticketTeam = {};
+  if (rawSheet && rawSheet.getLastRow() > 1) {
+    const rv = rawSheet.getRange(2, 1, rawSheet.getLastRow() - 1, RAWDATA_HEADERS.length).getValues();
+    rv.forEach(r => { if (r[0]) ticketTeam[r[0]] = { teamId: r[19] || '', teamName: r[12] || '' }; });
+  }
+
+  // userId -> {teamId, teamName} from Users sheet (cols F/G)
+  const userTeam = {};
+  const usersSheet = ss.getSheetByName('Users');
+  if (usersSheet && usersSheet.getLastRow() > 1) {
+    const uv = usersSheet.getRange(2, 1, usersSheet.getLastRow() - 1, 7).getValues();
+    uv.forEach(r => { if (r[0] && !userTeam[r[0]]) userTeam[r[0]] = { teamId: r[5] || '', teamName: r[6] || '' }; });
+  }
+
+  const n = sheet.getLastRow() - 1;
+  const ticketIds = sheet.getRange(2, 2, n, 1).getValues();   // col B  TicketId
+  const userIds = sheet.getRange(2, 13, n, 1).getValues();    // col M  PerformedByUserId
+  const out = new Array(n);
+  for (let r = 0; r < n; r++) {
+    const t = ticketTeam[ticketIds[r][0]] || {};
+    const u = userTeam[userIds[r][0]] || {};
+    const teamId = t.teamId || u.teamId || '';
+    const teamName = t.teamName || u.teamName || UNASSIGNED;
+    out[r] = [teamId, teamName];
+  }
+  sheet.getRange(2, 17, n, 2).setValues(out);  // cols Q/R
+  SpreadsheetApp.flush();
+  logOperation('TEAM_REPAIR', 'INFO', 'Repaired team attribution for ' + n + ' rows.');
+  return n;
 }
 
 function normalizeActivityId(value) {
@@ -330,6 +477,13 @@ function buildTicketContextMap(rawSheet) {
     if (!ticketId) return;
     map[ticketId] = {
       ticketNumber: row[1],
+      // Ticket's assigned user/team — used for attribution so reports reflect the
+      // ticket assignment, not the performing user's home team. (RawData cols:
+      // 10=AssignedUser, 12=AssignedTeam, 18=AssignedUserId, 19=AssignedTeamId)
+      assignedUserName: row[10] || '',
+      assignedUserId: row[18] || '',
+      assignedTeamName: row[12] || '',
+      assignedTeamId: row[19] || '',
       locationName: row[13],
       locationId: row[20],
       issueCategoryId: row[21] || '',

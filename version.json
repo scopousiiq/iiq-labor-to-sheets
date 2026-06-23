@@ -1,6 +1,6 @@
 {
-  "version": "1.0.0",
-  "released": "2026-05-26",
+  "version": "1.1.0",
+  "released": "2026-06-23",
   "releaseUrl": "https://github.com/scopousiiq/iiq-labor-to-sheets/releases/latest",
-  "message": "Initial public release with usage telemetry and remote version check. Districts can opt out by setting TELEMETRY_ENABLED=FALSE in the Config sheet (this also disables automated polling)."
+  "message": "Fixes labor time being double-counted (action + labor entries) via a de-duplicated NetHours column, corrects team and System Service attribution, and reconciles totals across all rollup reports. Also adds the iiQ brand theme, renames the menu to 'iiQ Labor', and expands the Instructions sheet. Existing installs: re-run iiQ Labor > Setup > Run Complete Setup, then Troubleshooting > Recompute Net Hours and Repair Team Attribution."
 }
