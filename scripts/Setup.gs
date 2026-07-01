@@ -55,12 +55,22 @@ function styleHeaderRow_(sheet, cols, row) {
 }
 
 // Zebra banding (white / pale-blue) with a brand-blue header. Idempotent.
+// The banding theme (and setFirstRowColor) governs font colors we don't set
+// explicitly, and can render text white — including on the white first row.
+// So we pin data rows to a dark font here, and callers must re-assert the
+// header style AFTER banding so its white-on-blue is the final word.
 function applyBanding_(sheet, cols, rows, headerRow) {
   headerRow = headerRow || 1;
+  var width = Math.max(cols, 1);
   sheet.getBandings().forEach(function(b) { b.remove(); });
   var total = Math.max(rows - headerRow + 1, 1);
-  var banding = sheet.getRange(headerRow, 1, total, Math.max(cols, 1)).applyRowBanding();
+  var banding = sheet.getRange(headerRow, 1, total, width).applyRowBanding();
   banding.setHeaderRowColor(BRAND.blue).setFirstRowColor(BRAND.white).setSecondRowColor(BRAND.bluePale);
+  // Force data rows to a dark font so no banding theme can leave white-on-white.
+  var bodyRows = rows - headerRow;
+  if (bodyRows > 0) {
+    sheet.getRange(headerRow + 1, 1, bodyRows, width).setFontColor(BRAND.blueDeep);
+  }
 }
 
 // Hero banner across row 1: brand-blue fill, white 16pt bold, gold underline,
@@ -122,10 +132,12 @@ function applyBrandTheme_(ss) {
     if (cfg.hero) {
       heroBanner_(sh, Math.max(lastCol, 2));
     } else if (cfg.header) {
-      styleHeaderRow_(sh, lastCol, cfg.header);
+      // Band first, then style the header — so the header's white-on-blue is
+      // applied last and can't be clobbered by the banding's white first row.
       if (cfg.band) {
         applyBanding_(sh, lastCol, Math.max(sh.getLastRow(), cfg.header), cfg.header);
       }
+      styleHeaderRow_(sh, lastCol, cfg.header);
     }
   });
   logOperation('SETUP', 'INFO', 'Applied iiQ brand theme to all sheets.');

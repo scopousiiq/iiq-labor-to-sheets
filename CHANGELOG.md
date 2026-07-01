@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-07-01 — v1.1.1
+
+### Fixed
+- **White font on a white background on data tabs (ActivityLog and other banded sheets)** (`Setup.gs`) — The brand theme styled the header row (white font) *before* applying zebra banding. The banding's default theme and its white first-row color govern any font color not set explicitly, so it could render text white — including on the white banded rows — leaving data unreadable. `applyBrandTheme_` now bands first and styles the header last (so the header's white-on-blue is the final word), and `applyBanding_` pins data rows to a dark (`blueDeep`) font so no banding theme can produce white-on-white. Existing installs can repair the display via **iiQ Labor → Setup → Regenerate Analytics Sheets** (or Run Complete Setup).
+
 ## 2026-06-23 — v1.1.0
 
 ### Fixed

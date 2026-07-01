@@ -1,6 +1,6 @@
 {
-  "version": "1.1.0",
-  "released": "2026-06-23",
+  "version": "1.1.1",
+  "released": "2026-07-01",
   "releaseUrl": "https://github.com/scopousiiq/iiq-labor-to-sheets/releases/latest",
-  "message": "Fixes labor time being double-counted (action + labor entries) via a de-duplicated NetHours column, corrects team and System Service attribution, and reconciles totals across all rollup reports. Also adds the iiQ brand theme, renames the menu to 'iiQ Labor', and expands the Instructions sheet. Existing installs: re-run iiQ Labor > Setup > Run Complete Setup, then Troubleshooting > Recompute Net Hours and Repair Team Attribution."
+  "message": "Fixes white font on a white background on the ActivityLog and other banded data tabs. Existing installs: re-run iiQ Labor > Setup > Regenerate Analytics Sheets (or Run Complete Setup) to repair the display."
 }
