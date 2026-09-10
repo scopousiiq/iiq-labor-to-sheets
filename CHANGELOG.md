@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-10 — Unreleased
+
+### Added
+- **Issue type filter on IndividualLookup.** A second dropdown narrows an individual's hours, cost, entry count, ticket count, overtime figures, activity detail and ticket summary to a single issue type. Leave it blank for every issue type, which reproduces the previous numbers exactly. Values are listed as `Category > Type` because issue type names are not unique on their own — the same type name recurs under several categories, and a bare name would silently merge unrelated work into one total. The list follows the selected date range, so it only offers types with activity in the period.
+- **EntryType column on the IndividualLookup activity detail**, so a row showing 0.00 hours is visibly a resolution action that was superseded by a labor entry on the same ticket, rather than looking like missing data.
+
+### Fixed
+- **The IndividualLookup activity detail only ever filled its first four columns.** LaborCost, LaborType, ResolutionAction and Notes were always blank. The formula sliced its columns with `INDEX(range,,{4,5,6,7,8})`, and an array of column numbers makes `INDEX` return only the first of them — with no error to show anything was wrong. It now uses `CHOOSECOLS`, and every detail column populates.
+- **IndividualLookup showed "1 ticket" when a selection had no tickets at all.** The ticket count wrapped `COUNTUNIQUE` around a filter that yields `#N/A` when empty, and the COUNTA family counts that error as one item. Now uses `ROWS(UNIQUE(FILTER(...)))`, which reports 0.
+- **The IndividualLookup detail hours column did not tie to the Total Hours above it.** The detail listed raw EffortHours while the total used de-duplicated NetHours; the column now shows NetHours and the two agree.
+
+### Changed
+- IndividualLookup gained a row for the new filter, so its summary block and detail table each moved down one row, and the ticket summary moved one column right to leave a spacer.
+- Number formats applied to the IndividualLookup hours, cost and count cells.
+
 ## 2026-07-01 — v1.1.1
 
 ### Fixed

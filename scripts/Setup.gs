@@ -874,6 +874,8 @@ function setupByLaborTypeSheet(ss) {
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
     'types,UNIQUE(FILTER(ActivityLog!J2:J,ActivityLog!J2:J<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
+    // EffortHours is right here, unlike the other rollups: a labor type name only
+    // exists on labor rows, and NetHours equals EffortHours on every labor row.
     'hours,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!F:F,ActivityLog!J:J,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'cost,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!H:H,ActivityLog!J:J,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'entries,BYROW(types,LAMBDA(t,COUNTIFS(ActivityLog!J:J,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
@@ -894,10 +896,13 @@ function setupIndividualLookupSheet(ss) {
   // --- Layout ---
   // Row 1: title
   // Row 2: "Select Individual" label + dropdown in B2
-  // Row 3: Summary row (total hours, total cost, entry count, ticket count)
-  // Row 4: blank
-  // Row 5: detail headers
-  // Row 6+: detail formula
+  // Row 3: "Filter Issue Type" label + dropdown in B3 (blank = every issue type)
+  // Row 4: period
+  // Rows 5-6: summary (hours, cost, entries, tickets)
+  // Row 7: overtime summary
+  // Row 8: detail headers (A-I) and "Ticket Summary" heading (K)
+  // Row 9+: detail formula; ticket summary headers in K9, its formula in K10
+  // Columns P-S: hidden helpers (two dropdown source lists + the split selection)
 
   sheet.getRange('A1').setValue('Individual Lookup').setFontWeight('bold').setFontSize(14);
 
@@ -914,82 +919,129 @@ function setupIndividualLookupSheet(ss) {
     .build();
   sheet.getRange('B2').setDataValidation(dropdownRule);
 
-  // Summary labels (row 3)
-  sheet.getRange('A3').setValue('Period').setFontWeight('bold');
-  sheet.getRange('B3').setFormula('=TEXT(DateFilters!B5,"MMM D, YYYY")&" - "&TEXT(DateFilters!B6,"MMM D, YYYY")');
+  // --- Issue type filter ---
+  // Listed as "Category > Type" rather than the bare type name: issue type names
+  // are not unique on their own — the same name recurs under several categories —
+  // so a bare name would silently merge unrelated work into one total. Subject is
+  // deliberately not the filter key either: it is free text the module generates
+  // in more than one format, so a single issue type shows up under several
+  // different subject strings.
+  sheet.getRange('A3').setValue('Filter Issue Type').setFontWeight('bold');
+  sheet.getRange('C3').setValue('Leave blank for all issue types')
+    .setFontStyle('italic').setFontColor('#666666');
 
-  sheet.getRange('A4').setValue('Total Hours').setFontWeight('bold');
-  sheet.getRange('B4').setFormula(
-    '=IF(B2="","",SUMIFS(ActivityLog!Z:Z,ActivityLog!N:N,B2,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6))'
-  );
-  sheet.getRange('C4').setValue('Total Cost').setFontWeight('bold');
-  sheet.getRange('D4').setFormula(
-    '=IF(B2="","",SUMIFS(ActivityLog!H:H,ActivityLog!N:N,B2,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6))'
-  );
-
-  sheet.getRange('A5').setValue('Entries').setFontWeight('bold');
-  sheet.getRange('B5').setFormula(
-    '=IF(B2="","",COUNTIFS(ActivityLog!N:N,B2,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6))'
-  );
-  sheet.getRange('C5').setValue('Tickets').setFontWeight('bold');
-  sheet.getRange('D5').setFormula(
-    '=IF(B2="","",IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!N2:N=B2,ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6)),0))'
+  sheet.getRange('Q2').setFormula(
+    '=SORT(UNIQUE(FILTER(ActivityLog!V2:V&" > "&ActivityLog!X2:X,' +
+    'ActivityLog!X2:X<>"",ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6)))'
   );
 
-  // Overtime row (row 6) — auto-detected from LaborTypes IsOvertime column
-  sheet.getRange('A6').setValue('Overtime').setFontWeight('bold').setFontSize(11);
+  const issueTypeRule = SpreadsheetApp.newDataValidation()
+    .requireValueInRange(sheet.getRange('Q2:Q'), true)
+    .setAllowInvalid(true)
+    .build();
+  sheet.getRange('B3').setDataValidation(issueTypeRule);
 
-  // OT Hours: sum ActivityLog EffortHours where individual matches, date in range,
-  // and the activity's LaborTypeId is in the set of LaborTypes where IsOvertime=TRUE
-  sheet.getRange('B6').setValue('OT Hours').setFontWeight('bold');
-  sheet.getRange('C6').setFormula(
-    '=IF(B2="","",' +
-    'IFERROR(SUMPRODUCT(' +
+  // Split the selection back into category and type so every rollup below can
+  // match ActivityLog!V and ActivityLog!X as separate criteria. Matching the
+  // concatenation instead would push array arithmetic into each formula, which
+  // is the documented way to poison a LET/HSTACK sheet with #N/A.
+  sheet.getRange('R2').setFormula('=IFERROR(TRIM(LEFT($B$3,FIND(" > ",$B$3)-1)),"")');
+  sheet.getRange('S2').setFormula('=IFERROR(TRIM(MID($B$3,FIND(" > ",$B$3)+3,500)),"")');
+
+  // Wraps a metric so an empty filter reproduces the pre-filter formula exactly:
+  // {I} is where the two extra SUMIFS/COUNTIFS criteria get spliced in.
+  function issueAware(template) {
+    return '=IF($B$2="","",IF($B$3="",' +
+      template.replace('{I}', '') + ',' +
+      template.replace('{I}', ',ActivityLog!V:V,$R$2,ActivityLog!X:X,$S$2') + '))';
+  }
+
+  // FILTER form of the same idea — collapses to an always-true array when no
+  // issue type is selected.
+  const ISSUE_COND =
+    'IF($B$3="",ActivityLog!D2:D<>"",ActivityLog!V2:V=$R$2),' +
+    'IF($B$3="",ActivityLog!D2:D<>"",ActivityLog!X2:X=$S$2)';
+
+  // SUMPRODUCT form, for the overtime row.
+  const ISSUE_TERM =
+    '*IF($B$3="",1,(ActivityLog!V$2:V=$R$2)*(ActivityLog!X$2:X=$S$2))';
+
+  const DATE_CRIT =
+    'ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6';
+
+  // Period (row 4)
+  sheet.getRange('A4').setValue('Period').setFontWeight('bold');
+  sheet.getRange('B4').setFormula('=TEXT(DateFilters!B5,"MMM D, YYYY")&" - "&TEXT(DateFilters!B6,"MMM D, YYYY")');
+
+  // Summary (rows 5-6). Hours come from NetHours (col Z), not raw EffortHours,
+  // so a ticket carrying both labor rows and action rows is counted once.
+  sheet.getRange('A5').setValue('Total Hours').setFontWeight('bold');
+  sheet.getRange('B5').setFormula(issueAware(
+    'SUMIFS(ActivityLog!Z:Z,ActivityLog!N:N,$B$2,' + DATE_CRIT + '{I})'
+  ));
+  sheet.getRange('C5').setValue('Total Cost').setFontWeight('bold');
+  sheet.getRange('D5').setFormula(issueAware(
+    'SUMIFS(ActivityLog!H:H,ActivityLog!N:N,$B$2,' + DATE_CRIT + '{I})'
+  ));
+
+  sheet.getRange('A6').setValue('Entries').setFontWeight('bold');
+  sheet.getRange('B6').setFormula(issueAware(
+    'COUNTIFS(ActivityLog!N:N,$B$2,' + DATE_CRIT + '{I})'
+  ));
+  sheet.getRange('C6').setValue('Tickets').setFontWeight('bold');
+  // ROWS(UNIQUE(FILTER(...))) rather than COUNTUNIQUE: an empty FILTER yields
+  // #N/A and the COUNTA family counts that error as 1. Once a filter can be
+  // applied an empty result is routine, so this would report 1 ticket for none.
+  sheet.getRange('D6').setFormula(
+    '=IF($B$2="","",IFERROR(ROWS(UNIQUE(FILTER(ActivityLog!B2:B,' +
+    'ActivityLog!N2:N=$B$2,ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6,' +
+    ISSUE_COND + '))),0))'
+  );
+
+  // Overtime row (row 7) — auto-detected from LaborTypes IsOvertime column.
+  // These sum raw EffortHours (col F) deliberately: the COUNTIFS term only
+  // matches rows carrying a LaborTypeId, and on those rows NetHours always
+  // equals EffortHours, so there is nothing to de-duplicate.
+  sheet.getRange('A7').setValue('Overtime').setFontWeight('bold').setFontSize(11);
+
+  const OT_BASE =
     '(ActivityLog!N$2:N=$B$2)' +
     '*(ActivityLog!D$2:D>=DateFilters!$B$5)' +
     '*(ActivityLog!D$2:D<=DateFilters!$B$6)' +
     '*(COUNTIFS(LaborTypes!A$2:A,ActivityLog!I$2:I,LaborTypes!C$2:C,"TRUE"))' +
-    '*ActivityLog!F$2:F' +
-    '),0))'
-  );
+    ISSUE_TERM;
 
-  sheet.getRange('D6').setValue('OT Cost').setFontWeight('bold');
-  sheet.getRange('E6').setFormula(
-    '=IF(B2="","",' +
-    'IFERROR(SUMPRODUCT(' +
-    '(ActivityLog!N$2:N=$B$2)' +
-    '*(ActivityLog!D$2:D>=DateFilters!$B$5)' +
-    '*(ActivityLog!D$2:D<=DateFilters!$B$6)' +
-    '*(COUNTIFS(LaborTypes!A$2:A,ActivityLog!I$2:I,LaborTypes!C$2:C,"TRUE"))' +
-    '*ActivityLog!H$2:H' +
-    '),0))'
-  );
+  function otMetric(measure) {
+    return '=IF($B$2="","",IFERROR(SUMPRODUCT(' + OT_BASE + measure + '),0))';
+  }
 
-  sheet.getRange('F6').setValue('OT Entries').setFontWeight('bold');
-  sheet.getRange('G6').setFormula(
-    '=IF(B2="","",' +
-    'IFERROR(SUMPRODUCT(' +
-    '(ActivityLog!N$2:N=$B$2)' +
-    '*(ActivityLog!D$2:D>=DateFilters!$B$5)' +
-    '*(ActivityLog!D$2:D<=DateFilters!$B$6)' +
-    '*(COUNTIFS(LaborTypes!A$2:A,ActivityLog!I$2:I,LaborTypes!C$2:C,"TRUE"))' +
-    '),0))'
-  );
+  sheet.getRange('B7').setValue('OT Hours').setFontWeight('bold');
+  sheet.getRange('C7').setFormula(otMetric('*ActivityLog!F$2:F'));
 
-  // Detail headers (row 7)
-  const detailHeaders = ['TicketNumber', 'Subject', 'ActivityDate', 'EffortHours', 'LaborCost', 'LaborType', 'ResolutionAction', 'Notes'];
-  sheet.getRange(7, 1, 1, detailHeaders.length).setValues([detailHeaders]);
-  sheet.getRange(7, 1, 1, detailHeaders.length).setFontWeight('bold');
+  sheet.getRange('D7').setValue('OT Cost').setFontWeight('bold');
+  sheet.getRange('E7').setFormula(otMetric('*ActivityLog!H$2:H'));
+
+  sheet.getRange('F7').setValue('OT Entries').setFontWeight('bold');
+  sheet.getRange('G7').setFormula(otMetric(''));
+
+  // Detail headers (row 8)
+  const detailHeaders = ['TicketNumber', 'Subject', 'ActivityDate', 'NetHours', 'LaborCost',
+                         'LaborType', 'ResolutionAction', 'EntryType', 'Notes'];
+  sheet.getRange(8, 1, 1, detailHeaders.length).setValues([detailHeaders]);
+  sheet.getRange(8, 1, 1, detailHeaders.length).setFontWeight('bold');
 
   // Detail formula — filtered activity rows for the selected individual
-  // Uses LET to filter first, then MAP to look up Subject from RawData and TEXT for date formatting
-  const detailFormula = '=IF(B2="","Select an individual from the dropdown above.",' +
+  // Uses LET to filter first, then MAP to look up Subject from RawData and TEXT for date formatting.
+  // NetHours is shown instead of EffortHours so the column ties to Total Hours
+  // above, and EntryType rides along so a superseded action row reading 0.00
+  // is explicable rather than looking like missing data.
+  const detailFormula = '=IF($B$2="","Select an individual from the dropdown above.",' +
     'IFERROR(LET(' +
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
     'raw,SORT(FILTER(' +
-    'HSTACK(ActivityLog!C2:C,ActivityLog!B2:B,ActivityLog!D2:D,ActivityLog!F2:F,ActivityLog!H2:H,ActivityLog!J2:J,ActivityLog!L2:L,ActivityLog!O2:O),' +
-    'ActivityLog!N2:N=B2,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD' +
+    'HSTACK(ActivityLog!C2:C,ActivityLog!B2:B,ActivityLog!D2:D,ActivityLog!Z2:Z,ActivityLog!H2:H,ActivityLog!J2:J,ActivityLog!L2:L,ActivityLog!Y2:Y,ActivityLog!O2:O),' +
+    'ActivityLog!N2:N=$B$2,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD,' + ISSUE_COND +
     '),3,FALSE),' +
     'tNums,INDEX(raw,,1),' +
     'tIds,INDEX(raw,,2),' +
@@ -997,48 +1049,63 @@ function setupIndividualLookupSheet(ss) {
     // MAP so TEXT() applies per row and the date column spills (a bare
     // TEXT(INDEX(raw,,3),...) returns only a scalar -> dates appeared on row 1 only).
     'dates,MAP(INDEX(raw,,3),LAMBDA(d,IF(d="","",TEXT(d,"M/D/YYYY")))),' +
-    'HSTACK(tNums,subjs,dates,INDEX(raw,,{4,5,6,7,8}))' +
+    // CHOOSECOLS, not INDEX(raw,,{4,5,...}): an array column argument makes INDEX
+    // return only its first column, so the trailing detail columns came back blank.
+    'HSTACK(tNums,subjs,dates,CHOOSECOLS(raw,4,5,6,7,8,9))' +
     '),"No activity entries found for this individual in the selected date range."))';
 
-  sheet.getRange(8, 1).setFormula(detailFormula);
+  sheet.getRange(9, 1).setFormula(detailFormula);
 
-  // Ticket summary below detail — unique tickets with aggregated hours
-  // This goes in column J+ so it sits beside the detail list
-  sheet.getRange(7, 10).setValue('Ticket Summary').setFontWeight('bold').setFontSize(11);
+  // Ticket summary beside the detail list, in column K with J left as a spacer.
+  // Issue category and type are ticket-level fields denormalized onto every
+  // activity row, so restricting the id list is enough — the per-ticket sums
+  // below cannot pick up hours belonging to a different issue type.
+  sheet.getRange(8, 11).setValue('Ticket Summary').setFontWeight('bold').setFontSize(11);
   const ticketSummaryHeaders = ['TicketNumber', 'Subject', 'Total Hours', 'Total Cost', 'Entries'];
-  sheet.getRange(8, 10, 1, ticketSummaryHeaders.length).setValues([ticketSummaryHeaders]);
-  sheet.getRange(8, 10, 1, ticketSummaryHeaders.length).setFontWeight('bold');
+  sheet.getRange(9, 11, 1, ticketSummaryHeaders.length).setValues([ticketSummaryHeaders]);
+  sheet.getRange(9, 11, 1, ticketSummaryHeaders.length).setFontWeight('bold');
 
-  const ticketSummaryFormula = '=IF(B2="","",' +
+  const ticketSummaryFormula = '=IF($B$2="","",' +
     'IFERROR(LET(' +
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
-    'ids,UNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!N2:N=B2,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
+    'ids,UNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!N2:N=$B$2,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD,' + ISSUE_COND + ')),' +
     'nums,BYROW(ids,LAMBDA(id,IFERROR(INDEX(ActivityLog!C:C,MATCH(id,ActivityLog!B:B,0)),"?"))),' +
     'subjs,BYROW(ids,LAMBDA(id,IFERROR(INDEX(RawData!C:C,MATCH(id,RawData!A:A,0)),"?"))),' +
-    'hours,BYROW(ids,LAMBDA(id,SUMIFS(ActivityLog!Z:Z,ActivityLog!B:B,id,ActivityLog!N:N,B2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'cost,BYROW(ids,LAMBDA(id,SUMIFS(ActivityLog!H:H,ActivityLog!B:B,id,ActivityLog!N:N,B2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'entries,BYROW(ids,LAMBDA(id,COUNTIFS(ActivityLog!B:B,id,ActivityLog!N:N,B2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'SORT(HSTACK(nums,subjs,hours,cost,entries),3,FALSE)' +
+    'hours,BYROW(ids,LAMBDA(id,SUMIFS(ActivityLog!Z:Z,ActivityLog!B:B,id,ActivityLog!N:N,$B$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'cost,BYROW(ids,LAMBDA(id,SUMIFS(ActivityLog!H:H,ActivityLog!B:B,id,ActivityLog!N:N,$B$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'entries,BYROW(ids,LAMBDA(id,COUNTIFS(ActivityLog!B:B,id,ActivityLog!N:N,$B$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'IFERROR(SORT(HSTACK(nums,subjs,hours,cost,entries),3,FALSE),HSTACK(nums,subjs,hours,cost,entries))' +
     '),"No tickets found."))';
 
-  sheet.getRange(9, 10).setFormula(ticketSummaryFormula);
+  sheet.getRange(10, 11).setFormula(ticketSummaryFormula);
 
-  // Hide the helper column P (dynamic list for dropdown)
-  sheet.hideColumns(16, 1);
+  // Hide the helper columns P-S (two dropdown source lists + split selection)
+  sheet.hideColumns(16, 4);
 
   // Column widths
   sheet.setColumnWidth(1, 140);
-  sheet.setColumnWidth(2, 200);
-  sheet.setColumnWidth(3, 130);
-  sheet.setColumnWidth(8, 250);  // Notes
-  sheet.setColumnWidth(10, 140);
-  sheet.setColumnWidth(11, 250); // Subject
-  sheet.setColumnWidth(12, 100);
+  sheet.setColumnWidth(2, 240);  // holds both dropdowns; issue type values are long
+  sheet.setColumnWidth(3, 200);  // "Total Cost" label / the filter hint
+  sheet.setColumnWidth(9, 250);  // Notes
+  sheet.setColumnWidth(10, 24);  // spacer between detail and ticket summary
+  sheet.setColumnWidth(11, 140);
+  sheet.setColumnWidth(12, 250); // Subject
   sheet.setColumnWidth(13, 100);
-  sheet.setColumnWidth(14, 80);
+  sheet.setColumnWidth(14, 100);
+  sheet.setColumnWidth(15, 80);
 
-  sheet.setFrozenRows(7);
+  formatSheetColumns(sheet, 9, [['D', FMT_DECIMAL], ['E', FMT_CURRENCY]]);
+  formatSheetColumns(sheet, 10, [['M', FMT_DECIMAL], ['N', FMT_CURRENCY], ['O', FMT_INTEGER]]);
+  sheet.getRange('B5').setNumberFormat(FMT_DECIMAL);
+  sheet.getRange('D5').setNumberFormat(FMT_CURRENCY);
+  sheet.getRange('B6').setNumberFormat(FMT_INTEGER);
+  sheet.getRange('D6').setNumberFormat(FMT_INTEGER);
+  sheet.getRange('C7').setNumberFormat(FMT_DECIMAL);
+  sheet.getRange('E7').setNumberFormat(FMT_CURRENCY);
+  sheet.getRange('G7').setNumberFormat(FMT_INTEGER);
+
+  sheet.setFrozenRows(8);
   return true;
 }
 
@@ -1053,6 +1120,11 @@ function setupByResolutionSheet(ss) {
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
     'actions,UNIQUE(FILTER(ActivityLog!L2:L,ActivityLog!L2:L<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
+    // EffortHours, not NetHours: only action rows carry a resolution action, so
+    // this is the action-only view of recorded time and is not meant to tie to
+    // the de-duplicated total. Switching to NetHours would zero out any action
+    // whose ticket also had a labor entry, making each action's hours depend on
+    // something about the ticket rather than on the action.
     'hours,BYROW(actions,LAMBDA(a,SUMIFS(ActivityLog!F:F,ActivityLog!L:L,a,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'cost,BYROW(actions,LAMBDA(a,SUMIFS(ActivityLog!H:H,ActivityLog!L:L,a,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'entries,BYROW(actions,LAMBDA(a,COUNTIFS(ActivityLog!L:L,a,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
@@ -1267,6 +1339,9 @@ function setupAgentPivotSheet(ss) {
     'endD,DateFilters!$B$6,' +
     'users,UNIQUE(FILTER(ActivityLog!N2:N,ActivityLog!N2:N<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
     'teams,BYROW(users,LAMBDA(u,IFERROR(INDEX(ActivityLog!R:R,MATCH(u,ActivityLog!N:N,0)),"---"))),' +
+    // The per-type columns sum EffortHours because a labor type name only appears
+    // on labor rows, where it equals NetHours. Total uses NetHours across all
+    // rows, so "Other" absorbs the action-row hours and the row still adds up.
     'stdH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$C$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'trvH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$D$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
     'otH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$E$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +

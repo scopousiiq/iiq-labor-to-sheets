@@ -48,7 +48,7 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 - **Teams, Users, ResolutionActions** — reference lookup tables
 - **LaborTypes** (4 cols: LaborTypeId, LaborTypeName, IsOvertime, OTMultiplier) — loaded from `GET /v1.0/labor/types` API; `IsOvertime` flag drives automatic overtime detection in IndividualLookup
 - **ByTeam, ByIndividual, ByDepartment, ByLaborType, ByResolution** — formula-driven rollup sheets using LET/BYROW/SUMIFS against ActivityLog, filtered by DateFilters
-- **IndividualLookup** — dropdown to select an individual; shows their activity detail and per-ticket summary for the filtered date range
+- **IndividualLookup** — dropdown to select an individual, plus a second dropdown to narrow to one issue type (listed as `Category > Type`; blank means every type); shows their activity detail and per-ticket summary for the filtered date range
 - **ByIssueCategory** — hours, cost, entry/ticket count per issue category
 - **ByIssueType** — hours, cost, entry/ticket count per issue type
 - **AgentPivot** (7 cols: Agent, Team, Standard, Travel, Overtime, Weekend, Total Hours) — per-agent pivot with hours by labor type; column headers reference cell values so labor type names are adjustable
@@ -81,7 +81,7 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 - **Destructive op safety:** `requireNoTriggers()` gates `startFullReloadWithConfirm()` to prevent trigger interference during data clearing.
 - **Load state machine:** Each data type has `LOAD_STATE_<TYPE>` in Config. The orchestrator finds the next pending load respecting group ordering.
 - **Batched sheet writes:** Both ticket and activity upserts collect updates into `{rowNumber: rowData}` maps and write consecutive rows in single `setValues()` calls via shared `writeBatchedUpdates()`.
-- **Header constants:** `RAWDATA_HEADERS` (21 cols) and `ACTIVITY_HEADERS` (20 cols) in `Setup.gs` are the single source of truth for column counts.
+- **Header constants:** `RAWDATA_HEADERS` (25 cols) and `ACTIVITY_HEADERS` (26 cols) in `Setup.gs` are the single source of truth for column counts.
 - **Analytics idempotency:** Analytics sheets use `deleteSheetIfExists()` + recreate pattern. Data sheets use skip-if-exists. "Regenerate Analytics Sheets" menu item rebuilds all formula sheets.
 - **Date formatting for API:** `formatDateForApi()` produces `M/D/YYYY` format required by IIQ filter facets.
 - **BI-safe values:** `IsClosed` stored as `'Closed'`/`'Open'` (not boolean). `IsPublic` stored as `1`/`0` (not boolean).
@@ -117,7 +117,7 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 | 24 | X | IssueTypeId | `t.IssueType.IssueTypeId` |
 | 25 | Y | IssueTypeName | `t.IssueType.Name` |
 
-## ActivityLog Column Layout (24 columns)
+## ActivityLog Column Layout (26 columns)
 
 | Col | Letter | Header | Source |
 |-----|--------|--------|--------|
@@ -145,6 +145,18 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 | 22 | V | IssueCategoryName | from `ticketMap` |
 | 23 | W | IssueTypeId | from `ticketMap` |
 | 24 | X | IssueTypeName | from `ticketMap` |
+| 25 | Y | EntryType | `computeNetHours()` — `'Labor'` or `'Action'` |
+| 26 | Z | NetHours | `computeNetHours()` — de-duplicated effort |
+
+`NetHours` is the hours column every rollup should sum. When a ticket carries at
+least one labor row, its resolution-action rows are set to 0 so the same effort
+is not counted twice; a ticket with no labor rows keeps its action-row effort.
+`EffortHours` (col F) is only correct where the formula already restricts itself
+to labor rows — a labor type name or a LaborTypeId criterion does that, a
+resolution action name does not.
+
+Columns U–X are ticket-level fields denormalized onto every activity row, so all
+activity rows for one ticket share the same issue category and type.
 
 ## Config Key Reference
 
@@ -212,7 +224,9 @@ Analytics sheets use **ActivityLog** as the data source with **DateFilters** for
 - `BYROW(entities, LAMBDA(e, SUMIFS/COUNTIFS(...)))` for per-entity metrics
 - `HSTACK(...)` to combine columns, `SORT(...)` to order results
 - All formulas reference **Name columns** (not ID columns) for `UNIQUE`/`COUNTIFS`
-- Key column references in formulas: `R` = TeamName, `N` = PerformedByUser, `T` = LocationName, `J` = LaborTypeName, `L` = ResolutionActionName, `V` = IssueCategoryName, `X` = IssueTypeName, `F` = EffortHours, `H` = LaborCost, `D` = ActivityDate, `B` = TicketId
+- Key column references in formulas: `R` = TeamName, `N` = PerformedByUser, `T` = LocationName, `J` = LaborTypeName, `L` = ResolutionActionName, `V` = IssueCategoryName, `X` = IssueTypeName, `F` = EffortHours, `H` = LaborCost, `D` = ActivityDate, `B` = TicketId, `Y` = EntryType, `Z` = NetHours
+- Sum `Z` (NetHours) for hours, not `F` — see the ActivityLog column layout below
+- To slice a multi-column LET variable use `CHOOSECOLS(raw,4,5,6)`. `INDEX(raw,,{4,5,6})` returns only the first of those columns, with no error to signal it
 
 ## Changelog
 
