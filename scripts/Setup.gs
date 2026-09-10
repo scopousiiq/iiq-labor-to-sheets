@@ -122,6 +122,7 @@ var THEME_SHEETS = [
 // whatever sheets currently exist (so it also re-themes an already-built sheet).
 function applyBrandTheme_(ss) {
   SpreadsheetApp.flush();
+  var failed = [];
   THEME_SHEETS.forEach(function(cfg) {
     var sh = ss.getSheetByName(cfg.name);
     if (!sh) return;
@@ -129,17 +130,28 @@ function applyBrandTheme_(ss) {
     try { sh.setTabColor(tabColor); } catch (e) { /* ignore */ }
     if (cfg.gridlines) { try { sh.setHiddenGridlines(true); } catch (e) { /* ignore */ } }
     var lastCol = Math.max(sh.getLastColumn(), 1);
-    if (cfg.hero) {
-      heroBanner_(sh, Math.max(lastCol, 2));
-    } else if (cfg.header) {
-      // Band first, then style the header — so the header's white-on-blue is
-      // applied last and can't be clobbered by the banding's white first row.
-      if (cfg.band) {
-        applyBanding_(sh, lastCol, Math.max(sh.getLastRow(), cfg.header), cfg.header);
+    // Per-sheet guard: banding and the body font pass cover every data row, so
+    // on the biggest sheets they are the most likely thing here to fail. One
+    // sheet failing must not leave every later tab unstyled.
+    try {
+      if (cfg.hero) {
+        heroBanner_(sh, Math.max(lastCol, 2));
+      } else if (cfg.header) {
+        // Band first, then style the header — so the header's white-on-blue is
+        // applied last and can't be clobbered by the banding's white first row.
+        if (cfg.band) {
+          applyBanding_(sh, lastCol, Math.max(sh.getLastRow(), cfg.header), cfg.header);
+        }
+        styleHeaderRow_(sh, lastCol, cfg.header);
       }
-      styleHeaderRow_(sh, lastCol, cfg.header);
+    } catch (e) {
+      failed.push(cfg.name);
     }
   });
+  if (failed.length) {
+    logOperation('SETUP', 'WARNING', 'Brand theme skipped ' + failed.length +
+      ' sheet(s): ' + failed.join(', ') + '. Re-run to retry.');
+  }
   logOperation('SETUP', 'INFO', 'Applied iiQ brand theme to all sheets.');
 }
 
@@ -246,6 +258,8 @@ var SHEET_ORDER = [
   'TicketIndex', 'ActivityIndex', 'ActivityFailures'
 ];
 
+// Returns the number of tabs it could not move. Never throws: tab order is
+// cosmetic and must not cost the caller a completed rebuild.
 function reorderSheets(ss) {
   // Flush pending sheet create/delete operations before reordering —
   // without this, activate()+moveActiveSheet() can fail after rapid
@@ -253,15 +267,36 @@ function reorderSheets(ss) {
   SpreadsheetApp.flush();
 
   var position = 1;
+  var failed = 0;
   SHEET_ORDER.forEach(function(name) {
     var sheet = ss.getSheetByName(name);
-    if (sheet) {
+    if (!sheet) return;
+    var target = position;
+    position++;
+    // Skip tabs already in place. Each activate()+moveActiveSheet() pair is a
+    // document-structure mutation, and on a large spreadsheet those are what
+    // provoke "Service Spreadsheets failed while accessing document"; most
+    // re-runs only need to move a handful of tabs.
+    if (sheet.getIndex() === target) return;
+    try {
       sheet.activate();
-      ss.moveActiveSheet(position);
-      position++;
+      ss.moveActiveSheet(target);
+    } catch (e) {
+      // One retry after a flush — the failure is usually a stale view of the
+      // sheet list right after a delete-and-recreate, not a permanent error.
+      try {
+        SpreadsheetApp.flush();
+        sheet.activate();
+        ss.moveActiveSheet(target);
+      } catch (e2) {
+        failed++;
+        logOperation('SETUP', 'WARNING',
+          'Could not move tab "' + name + '" to position ' + target + ': ' + e2.message);
+      }
     }
   });
   // Any sheets not in the list (e.g. user-created) stay after the ordered ones
+  return failed;
 }
 
 function setupInstructionsSheet(ss) {
@@ -1535,8 +1570,23 @@ function regenerateAnalyticsSheets() {
   setupLocationByCategorySheet(ss);
   setupDashboardSheet(ss);
   setupYearSummarySheet(ss);
-  reorderSheets(ss);
-  applyBrandTheme_(ss);
+
+  // Tab order and theming are cosmetic and run last, so by this point every
+  // sheet has already been rebuilt and committed. Neither is allowed to throw
+  // away that work: on a large spreadsheet these two passes are the ones that
+  // hit "Service Spreadsheets failed while accessing document", and an
+  // exception here previously surfaced as a total failure even though the
+  // rebuild had succeeded. Both are safe to re-run.
+  try {
+    reorderSheets(ss);
+  } catch (e) {
+    logOperation('SETUP', 'WARNING', 'Tab reorder failed: ' + e.message);
+  }
+  try {
+    applyBrandTheme_(ss);
+  } catch (e) {
+    logOperation('SETUP', 'WARNING', 'Brand theme failed: ' + e.message);
+  }
   logOperation('SETUP', 'SUCCESS', 'Regenerated all analytics sheets');
 }
 

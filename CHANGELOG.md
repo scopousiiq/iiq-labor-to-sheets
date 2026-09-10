@@ -11,6 +11,8 @@
 - **IndividualLookup showed "1 ticket" when a selection had no tickets at all.** The ticket count wrapped `COUNTUNIQUE` around a filter that yields `#N/A` when empty, and the COUNTA family counts that error as one item. Now uses `ROWS(UNIQUE(FILTER(...)))`, which reports 0.
 - **The IndividualLookup detail hours column did not tie to the Total Hours above it.** The detail listed raw EffortHours while the total used de-duplicated NetHours; the column now shows NetHours and the two agree.
 
+- **"Regenerate Analytics Sheets" reported total failure on large spreadsheets even though every sheet had been rebuilt.** It failed with `Service Spreadsheets failed while accessing document with id ...`, thrown by the tab-reordering step that runs *after* all the sheets are built — so the rebuild had actually succeeded, but the tabs were left in creation order and unstyled, and nothing said so. Reordering and theming are now non-fatal: a failure in either is logged as a WARNING and the run completes. Reordering also skips tabs already in the right place and retries once, which cuts the document-structure operations that provoke the error in the first place, and the brand theme now guards each sheet individually so one large sheet can't leave every later tab unstyled. Both passes are safe to re-run.
+
 ### Changed
 - IndividualLookup gained a row for the new filter, so its summary block and detail table each moved down one row, and the ticket summary moved one column right to leave a spacer.
 - Number formats applied to the IndividualLookup hours, cost and count cells.
