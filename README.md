@@ -74,7 +74,7 @@ Click **iiQ Data > Setup > Setup Automated Triggers** to create all triggers aut
 |-------|---------------|
 | `ByTeam` | Hours, cost, and ticket count per team |
 | `ByIndividual` | Hours, cost, and ticket count per person (with team) |
-| `ByDepartment` | Hours, cost, and ticket count per location |
+| `ByDepartment` | Hours, cost, and ticket count per location (the tab name predates the field it groups on) |
 | `ByLaborType` | Hours, cost, and ticket count per labor type |
 | `ByResolution` | Hours, cost, and ticket count per resolution action |
 | `ByIssueCategory` | Hours, cost, and ticket count per issue category |
@@ -86,6 +86,7 @@ Click **iiQ Data > Setup > Setup Automated Triggers** to create all triggers aut
 | `CategoryByLaborType` | Cross-dimension: issue category hours broken down by labor type |
 | `LocationByCategory` | Cross-dimension: location hours broken down by issue category |
 | `IndividualLookup` | Select a person to see their activity detail and per-ticket summary |
+| `LocationLookup` | Select a location to see its agents, issue categories, and tickets |
 | `YearSummary` | Monthly aggregation by team, agent, labor type, and resolution |
 | `Dashboard` | KPI summary (total hours, cost, top performer, top team) |
 

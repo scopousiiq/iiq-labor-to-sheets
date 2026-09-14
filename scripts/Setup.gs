@@ -113,6 +113,7 @@ var THEME_SHEETS = [
   // IndividualLookup has an irregular layout (controls + side-by-side summary),
   // so only tab color + hidden gridlines are applied — no generic header band.
   { name: 'IndividualLookup',   tab: 'blue', gridlines: true },
+  { name: 'LocationLookup',     tab: 'blue', gridlines: true },
   { name: 'Config',             tab: 'line', header: 1 },
   { name: 'DateFilters',        tab: 'line' },
   { name: 'Logs',               tab: 'line', header: 1 }
@@ -207,6 +208,7 @@ function setupLaborTrackerDashboard() {
   if (setupByIssueCategorySheet(ss)) created.push('ByIssueCategory'); else skipped.push('ByIssueCategory');
   if (setupByIssueTypeSheet(ss)) created.push('ByIssueType'); else skipped.push('ByIssueType');
   if (setupIndividualLookupSheet(ss)) created.push('IndividualLookup'); else skipped.push('IndividualLookup');
+  if (setupLocationLookupSheet(ss)) created.push('LocationLookup'); else skipped.push('LocationLookup');
   if (setupAgentPivotSheet(ss)) created.push('AgentPivot'); else skipped.push('AgentPivot');
   if (setupZeroLaborSheet(ss)) created.push('ZeroLabor'); else skipped.push('ZeroLabor');
   if (setupAgentByCategorySheet(ss)) created.push('AgentByCategory'); else skipped.push('AgentByCategory');
@@ -251,7 +253,7 @@ var SHEET_ORDER = [
   'Teams', 'Users', 'LaborTypes', 'ResolutionActions',
   'ByTeam', 'ByIndividual', 'ByDepartment', 'ByLaborType', 'ByResolution',
   'ByIssueCategory', 'ByIssueType',
-  'IndividualLookup', 'AgentPivot', 'ZeroLabor',
+  'IndividualLookup', 'LocationLookup', 'AgentPivot', 'ZeroLabor',
   'AgentByCategory', 'TeamByCategory', 'CategoryByLaborType', 'LocationByCategory',
   'YearSummary', 'Dashboard', 'Logs',
   // Hidden / internal (end of tab bar)
@@ -402,6 +404,7 @@ function setupInstructionsSheet(ss) {
   writePair('ByIssueCategory', 'Rollup: hours, cost, entry count per issue category');
   writePair('ByIssueType', 'Rollup: hours, cost, entry count per issue type');
   writePair('IndividualLookup', 'Select an individual to see their tickets and activity detail');
+  writePair('LocationLookup', 'Select a location to see its agents, issue categories, and tickets');
   writePair('AgentPivot', 'Per-agent hours broken down by labor type (Standard, Travel, Overtime, Weekend)');
   writePair('ZeroLabor', 'Closed tickets with zero labor hours logged (flag for review)');
   writePair('AgentByCategory', 'Cross-dimension: hours per agent broken down by issue category');
@@ -1144,6 +1147,238 @@ function setupIndividualLookupSheet(ss) {
   return true;
 }
 
+function setupLocationLookupSheet(ss) {
+  deleteSheetIfExists(ss, 'LocationLookup');
+  const sheet = ss.insertSheet('LocationLookup');
+
+  // --- Layout ---
+  // Row 1: title
+  // Row 2: "Select Location" label + dropdown in B2
+  // Row 3: "Filter Issue Category" label + dropdown in B3 (blank = every category)
+  // Row 4: period
+  // Rows 5-6: summary (hours, cost, entries, tickets)
+  // Row 7: overtime summary
+  // Row 9: block headings, row 10: block column headers, row 11: block formulas
+  //   A-E agents, G-J issue categories, L-P tickets
+  // Columns R-S: hidden dropdown source lists
+  //
+  // The three blocks sit side by side rather than stacked because each one
+  // spills an array of unknown height; stacking them would make the first
+  // block's growth collide with the next block's headers.
+
+  sheet.getRange('A1').setValue('Location Lookup').setFontWeight('bold').setFontSize(14);
+
+  sheet.getRange('A2').setValue('Select Location').setFontWeight('bold');
+
+  // Dynamic dropdown: locations with activity in the filtered date range
+  sheet.getRange('R2').setFormula(
+    '=SORT(UNIQUE(FILTER(ActivityLog!T2:T,ActivityLog!T2:T<>"",' +
+    'ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6)))'
+  );
+
+  const locationRule = SpreadsheetApp.newDataValidation()
+    .requireValueInRange(sheet.getRange('R2:R'), true)
+    .build();
+  sheet.getRange('B2').setDataValidation(locationRule);
+
+  // --- Issue category filter ---
+  // Category rather than the "Category > Type" pairing IndividualLookup uses:
+  // category names are unique on their own, so one criterion is enough and the
+  // sheet avoids the split-the-selection helpers that pairing requires.
+  sheet.getRange('A3').setValue('Filter Issue Category').setFontWeight('bold');
+  sheet.getRange('C3').setValue('Leave blank for all issue categories')
+    .setFontStyle('italic').setFontColor('#666666');
+
+  sheet.getRange('S2').setFormula(
+    '=SORT(UNIQUE(FILTER(ActivityLog!V2:V,ActivityLog!V2:V<>"",' +
+    'ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6)))'
+  );
+
+  const categoryRule = SpreadsheetApp.newDataValidation()
+    .requireValueInRange(sheet.getRange('S2:S'), true)
+    .setAllowInvalid(true)
+    .build();
+  sheet.getRange('B3').setDataValidation(categoryRule);
+
+  // Wraps a metric so an empty filter reproduces the unfiltered formula exactly:
+  // {C} is where the extra SUMIFS/COUNTIFS criteria pair gets spliced in.
+  function categoryAware(template) {
+    return '=IF($B$2="","",IF($B$3="",' +
+      template.replace('{C}', '') + ',' +
+      template.replace('{C}', ',ActivityLog!V:V,$B$3') + '))';
+  }
+
+  // FILTER form of the same idea — collapses to an always-true array when no
+  // category is selected.
+  const CAT_COND = 'IF($B$3="",ActivityLog!D2:D<>"",ActivityLog!V2:V=$B$3)';
+
+  // SUMPRODUCT form, for the overtime row.
+  const CAT_TERM = '*IF($B$3="",1,(ActivityLog!V$2:V=$B$3))';
+
+  const DATE_CRIT =
+    'ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6';
+
+  const DATE_COND =
+    'ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6';
+
+  // Period (row 4)
+  sheet.getRange('A4').setValue('Period').setFontWeight('bold');
+  sheet.getRange('B4').setFormula(
+    '=TEXT(DateFilters!B5,"MMM D, YYYY")&" - "&TEXT(DateFilters!B6,"MMM D, YYYY")'
+  );
+
+  // Summary (rows 5-6). Hours come from NetHours (col Z), not raw EffortHours,
+  // so a ticket carrying both labor rows and action rows is counted once.
+  sheet.getRange('A5').setValue('Total Hours').setFontWeight('bold');
+  sheet.getRange('B5').setFormula(categoryAware(
+    'SUMIFS(ActivityLog!Z:Z,ActivityLog!T:T,$B$2,' + DATE_CRIT + '{C})'
+  ));
+  sheet.getRange('C5').setValue('Total Cost').setFontWeight('bold');
+  sheet.getRange('D5').setFormula(categoryAware(
+    'SUMIFS(ActivityLog!H:H,ActivityLog!T:T,$B$2,' + DATE_CRIT + '{C})'
+  ));
+
+  sheet.getRange('A6').setValue('Entries').setFontWeight('bold');
+  sheet.getRange('B6').setFormula(categoryAware(
+    'COUNTIFS(ActivityLog!T:T,$B$2,' + DATE_CRIT + '{C})'
+  ));
+  sheet.getRange('C6').setValue('Tickets').setFontWeight('bold');
+  // ROWS(UNIQUE(FILTER(...))) rather than COUNTUNIQUE: an empty FILTER yields
+  // #N/A and the COUNTA family counts that error as 1, which would report one
+  // ticket for none.
+  sheet.getRange('D6').setFormula(
+    '=IF($B$2="","",IFERROR(ROWS(UNIQUE(FILTER(ActivityLog!B2:B,' +
+    'ActivityLog!T2:T=$B$2,' + DATE_COND + ',' + CAT_COND + '))),0))'
+  );
+
+  // Overtime row (row 7) — auto-detected from the LaborTypes IsOvertime column.
+  // These sum raw EffortHours (col F) deliberately: the COUNTIFS term only
+  // matches rows carrying a LaborTypeId, and on those rows NetHours always
+  // equals EffortHours, so there is nothing to de-duplicate.
+  sheet.getRange('A7').setValue('Overtime').setFontWeight('bold').setFontSize(11);
+
+  const OT_BASE =
+    '(ActivityLog!T$2:T=$B$2)' +
+    '*(ActivityLog!D$2:D>=DateFilters!$B$5)' +
+    '*(ActivityLog!D$2:D<=DateFilters!$B$6)' +
+    '*(COUNTIFS(LaborTypes!A$2:A,ActivityLog!I$2:I,LaborTypes!C$2:C,"TRUE"))' +
+    CAT_TERM;
+
+  function otMetric(measure) {
+    return '=IF($B$2="","",IFERROR(SUMPRODUCT(' + OT_BASE + measure + '),0))';
+  }
+
+  sheet.getRange('B7').setValue('OT Hours').setFontWeight('bold');
+  sheet.getRange('C7').setFormula(otMetric('*ActivityLog!F$2:F'));
+
+  sheet.getRange('D7').setValue('OT Cost').setFontWeight('bold');
+  sheet.getRange('E7').setFormula(otMetric('*ActivityLog!H$2:H'));
+
+  sheet.getRange('F7').setValue('OT Entries').setFontWeight('bold');
+  sheet.getRange('G7').setFormula(otMetric(''));
+
+  // --- Block headings and headers (rows 9-10) ---
+  sheet.getRange('A9').setValue('Agents at This Location').setFontWeight('bold').setFontSize(11);
+  sheet.getRange('G9').setValue('By Issue Category').setFontWeight('bold').setFontSize(11);
+  sheet.getRange('L9').setValue('Tickets').setFontWeight('bold').setFontSize(11);
+
+  const agentHeaders = ['Agent', 'Team', 'Hours', 'Cost', 'Entries'];
+  sheet.getRange(10, 1, 1, agentHeaders.length).setValues([agentHeaders]);
+  sheet.getRange(10, 1, 1, agentHeaders.length).setFontWeight('bold');
+
+  const categoryHeaders = ['Issue Category', 'Hours', 'Cost', 'Entries'];
+  sheet.getRange(10, 7, 1, categoryHeaders.length).setValues([categoryHeaders]);
+  sheet.getRange(10, 7, 1, categoryHeaders.length).setFontWeight('bold');
+
+  const ticketHeaders = ['TicketNumber', 'Subject', 'Hours', 'Cost', 'Entries'];
+  sheet.getRange(10, 12, 1, ticketHeaders.length).setValues([ticketHeaders]);
+  sheet.getRange(10, 12, 1, ticketHeaders.length).setFontWeight('bold');
+
+  // Each block filters ActivityLog down to this location once, then aggregates
+  // over that much smaller array. Running the per-agent and per-ticket sums
+  // straight against the full columns instead would rescan the whole log once
+  // per row of output, which is what makes a busy location's block crawl.
+
+  // --- Agents block (A11) ---
+  const agentFormula = '=IF($B$2="","Select a location from the dropdown above.",' +
+    'IFERROR(LET(' +
+    'rows,FILTER(HSTACK(ActivityLog!N2:N,ActivityLog!R2:R,ActivityLog!Z2:Z,ActivityLog!H2:H),' +
+      'ActivityLog!T2:T=$B$2,ActivityLog!N2:N<>"",' + DATE_COND + ',' + CAT_COND + '),' +
+    'who,CHOOSECOLS(rows,1),' +
+    'agents,UNIQUE(who),' +
+    'teams,BYROW(agents,LAMBDA(a,IFERROR(INDEX(CHOOSECOLS(rows,2),MATCH(a,who,0)),""))),' +
+    'hrs,BYROW(agents,LAMBDA(a,IFERROR(SUM(FILTER(CHOOSECOLS(rows,3),who=a)),0))),' +
+    'cst,BYROW(agents,LAMBDA(a,IFERROR(SUM(FILTER(CHOOSECOLS(rows,4),who=a)),0))),' +
+    'ent,BYROW(agents,LAMBDA(a,IFERROR(ROWS(FILTER(who,who=a)),0))),' +
+    'IFERROR(SORT(HSTACK(agents,teams,hrs,cst,ent),3,FALSE),HSTACK(agents,teams,hrs,cst,ent))' +
+    '),"No activity found for this location in the selected date range."))';
+
+  sheet.getRange(11, 1).setFormula(agentFormula);
+
+  // --- Issue category block (G11) ---
+  const categoryFormula = '=IF($B$2="","",' +
+    'IFERROR(LET(' +
+    'rows,FILTER(HSTACK(ActivityLog!V2:V,ActivityLog!Z2:Z,ActivityLog!H2:H),' +
+      'ActivityLog!T2:T=$B$2,ActivityLog!V2:V<>"",' + DATE_COND + ',' + CAT_COND + '),' +
+    'cat,CHOOSECOLS(rows,1),' +
+    'cats,UNIQUE(cat),' +
+    'hrs,BYROW(cats,LAMBDA(c,IFERROR(SUM(FILTER(CHOOSECOLS(rows,2),cat=c)),0))),' +
+    'cst,BYROW(cats,LAMBDA(c,IFERROR(SUM(FILTER(CHOOSECOLS(rows,3),cat=c)),0))),' +
+    'ent,BYROW(cats,LAMBDA(c,IFERROR(ROWS(FILTER(cat,cat=c)),0))),' +
+    'IFERROR(SORT(HSTACK(cats,hrs,cst,ent),2,FALSE),HSTACK(cats,hrs,cst,ent))' +
+    '),"No issue categories found."))';
+
+  sheet.getRange(11, 7).setFormula(categoryFormula);
+
+  // --- Tickets block (L11) ---
+  // Subject comes from RawData because ActivityLog does not carry it; that is
+  // the one lookup here that still has to reach outside the filtered array.
+  const ticketFormula = '=IF($B$2="","",' +
+    'IFERROR(LET(' +
+    'rows,FILTER(HSTACK(ActivityLog!B2:B,ActivityLog!C2:C,ActivityLog!Z2:Z,ActivityLog!H2:H),' +
+      'ActivityLog!T2:T=$B$2,' + DATE_COND + ',' + CAT_COND + '),' +
+    'tid,CHOOSECOLS(rows,1),' +
+    'ids,UNIQUE(tid),' +
+    'nums,BYROW(ids,LAMBDA(id,IFERROR(INDEX(CHOOSECOLS(rows,2),MATCH(id,tid,0)),"?"))),' +
+    'subjs,BYROW(ids,LAMBDA(id,IFERROR(INDEX(RawData!C:C,MATCH(id,RawData!A:A,0)),"?"))),' +
+    'hrs,BYROW(ids,LAMBDA(id,IFERROR(SUM(FILTER(CHOOSECOLS(rows,3),tid=id)),0))),' +
+    'cst,BYROW(ids,LAMBDA(id,IFERROR(SUM(FILTER(CHOOSECOLS(rows,4),tid=id)),0))),' +
+    'ent,BYROW(ids,LAMBDA(id,IFERROR(ROWS(FILTER(tid,tid=id)),0))),' +
+    'IFERROR(SORT(HSTACK(nums,subjs,hrs,cst,ent),3,FALSE),HSTACK(nums,subjs,hrs,cst,ent))' +
+    '),"No tickets found."))';
+
+  sheet.getRange(11, 12).setFormula(ticketFormula);
+
+  // Hide the helper columns R-S (the two dropdown source lists)
+  sheet.hideColumns(18, 2);
+
+  // Column widths
+  sheet.setColumnWidth(1, 200);   // Agent / row labels
+  sheet.setColumnWidth(2, 240);   // holds both dropdowns
+  sheet.setColumnWidth(3, 200);   // "Total Cost" label / the filter hint
+  sheet.setColumnWidth(6, 24);    // spacer before the category block
+  sheet.setColumnWidth(7, 250);   // Issue Category
+  sheet.setColumnWidth(11, 24);   // spacer before the ticket block
+  sheet.setColumnWidth(12, 140);  // TicketNumber
+  sheet.setColumnWidth(13, 250);  // Subject
+
+  formatSheetColumns(sheet, 11, [
+    ['C', FMT_DECIMAL], ['D', FMT_CURRENCY], ['E', FMT_INTEGER],
+    ['H', FMT_DECIMAL], ['I', FMT_CURRENCY], ['J', FMT_INTEGER],
+    ['N', FMT_DECIMAL], ['O', FMT_CURRENCY], ['P', FMT_INTEGER]
+  ]);
+  sheet.getRange('B5').setNumberFormat(FMT_DECIMAL);
+  sheet.getRange('D5').setNumberFormat(FMT_CURRENCY);
+  sheet.getRange('B6').setNumberFormat(FMT_INTEGER);
+  sheet.getRange('D6').setNumberFormat(FMT_INTEGER);
+  sheet.getRange('C7').setNumberFormat(FMT_DECIMAL);
+  sheet.getRange('E7').setNumberFormat(FMT_CURRENCY);
+  sheet.getRange('G7').setNumberFormat(FMT_INTEGER);
+
+  sheet.setFrozenRows(10);
+  return true;
+}
+
 function setupByResolutionSheet(ss) {
   deleteSheetIfExists(ss, 'ByResolution');
   const sheet = ss.insertSheet('ByResolution');
@@ -1562,6 +1797,7 @@ function regenerateAnalyticsSheets() {
   setupByIssueCategorySheet(ss);
   setupByIssueTypeSheet(ss);
   setupIndividualLookupSheet(ss);
+  setupLocationLookupSheet(ss);
   setupAgentPivotSheet(ss);
   setupZeroLaborSheet(ss);
   setupAgentByCategorySheet(ss);
@@ -1595,7 +1831,7 @@ function regenerateAnalyticsSheetsWithConfirm() {
   const response = ui.alert(
     'Regenerate Analytics Sheets',
     'This will delete and recreate all formula-driven analytics sheets ' +
-    '(LaborTypes, DateFilters, all By* rollups, IndividualLookup, AgentPivot, ZeroLabor, cross-dimension sheets, Dashboard, YearSummary).\n\n' +
+    '(LaborTypes, DateFilters, all By* rollups, IndividualLookup, LocationLookup, AgentPivot, ZeroLabor, cross-dimension sheets, Dashboard, YearSummary).\n\n' +
     'Data sheets (RawData, ActivityLog, LaborTypes, etc.) will NOT be affected.\n\nContinue?',
     ui.ButtonSet.YES_NO
   );

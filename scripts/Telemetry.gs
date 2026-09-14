@@ -49,6 +49,7 @@ const TELEMETRY_CANONICAL_ANALYTICS = [
   'ByLaborType',
   'ByResolution',
   'IndividualLookup',
+  'LocationLookup',
   // Issue category / type rollups
   'ByIssueCategory',
   'ByIssueType',

@@ -1,8 +1,9 @@
 # Changelog
 
-## 2026-09-10 — Unreleased
+## 2026-09-14 — Unreleased
 
 ### Added
+- **LocationLookup sheet — labor by location.** Pick a location from a dropdown and see its total hours, cost, entry count, ticket count and overtime for the selected date range, plus three side-by-side breakdowns: the agents who worked there (with team), the issue categories the time went to, and every ticket with its hours, cost and entry count. A second dropdown narrows all of it to one issue category; leave it blank for every category. Both dropdowns follow the DateFilters range, so they only offer locations and categories with activity in the period. This is the location counterpart to IndividualLookup. Note that per-location *totals* were already available on the `ByDepartment` sheet, which groups by location despite its name — LocationLookup is the drill-down into a single one.
 - **Issue type filter on IndividualLookup.** A second dropdown narrows an individual's hours, cost, entry count, ticket count, overtime figures, activity detail and ticket summary to a single issue type. Leave it blank for every issue type, which reproduces the previous numbers exactly. Values are listed as `Category > Type` because issue type names are not unique on their own — the same type name recurs under several categories, and a bare name would silently merge unrelated work into one total. The list follows the selected date range, so it only offers types with activity in the period.
 - **EntryType column on the IndividualLookup activity detail**, so a row showing 0.00 hours is visibly a resolution action that was superseded by a labor entry on the same ticket, rather than looking like missing data.
 

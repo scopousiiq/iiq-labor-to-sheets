@@ -47,8 +47,9 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 - **ActivityLog** (20 cols) — resolution action time entries with denormalized team/location
 - **Teams, Users, ResolutionActions** — reference lookup tables
 - **LaborTypes** (4 cols: LaborTypeId, LaborTypeName, IsOvertime, OTMultiplier) — loaded from `GET /v1.0/labor/types` API; `IsOvertime` flag drives automatic overtime detection in IndividualLookup
-- **ByTeam, ByIndividual, ByDepartment, ByLaborType, ByResolution** — formula-driven rollup sheets using LET/BYROW/SUMIFS against ActivityLog, filtered by DateFilters
+- **ByTeam, ByIndividual, ByDepartment, ByLaborType, ByResolution** — formula-driven rollup sheets using LET/BYROW/SUMIFS against ActivityLog, filtered by DateFilters. `ByDepartment` groups on LocationName (ActivityLog col T) — it is the per-location rollup; the tab and its column header are kept as-is because district dashboards reference both by name.
 - **IndividualLookup** — dropdown to select an individual, plus a second dropdown to narrow to one issue type (listed as `Category > Type`; blank means every type); shows their activity detail and per-ticket summary for the filtered date range
+- **LocationLookup** — dropdown to select a location, plus a second dropdown to narrow to one issue category (blank means every category); shows that location's totals and overtime, and three side-by-side blocks: agents who worked there, hours by issue category, and per-ticket detail. Each block filters ActivityLog to the location once and aggregates over that array rather than rescanning the full columns per output row.
 - **ByIssueCategory** — hours, cost, entry/ticket count per issue category
 - **ByIssueType** — hours, cost, entry/ticket count per issue type
 - **AgentPivot** (7 cols: Agent, Team, Standard, Travel, Overtime, Weekend, Total Hours) — per-agent pivot with hours by labor type; column headers reference cell values so labor type names are adjustable
