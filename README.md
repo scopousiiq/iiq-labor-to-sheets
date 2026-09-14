@@ -86,7 +86,7 @@ Click **iiQ Data > Setup > Setup Automated Triggers** to create all triggers aut
 | `CategoryByLaborType` | Cross-dimension: issue category hours broken down by labor type |
 | `LocationByCategory` | Cross-dimension: location hours broken down by issue category |
 | `IndividualLookup` | Select a person to see their activity detail and per-ticket summary |
-| `LocationLookup` | Select a location to see its agents, issue categories, and tickets |
+| `LocationLookup` | Select a location to see its agents, issue types, and tickets — filterable to one `Category > Type` |
 | `YearSummary` | Monthly aggregation by team, agent, labor type, and resolution |
 | `Dashboard` | KPI summary (total hours, cost, top performer, top team) |
 

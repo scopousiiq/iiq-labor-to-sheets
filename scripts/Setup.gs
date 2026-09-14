@@ -404,7 +404,7 @@ function setupInstructionsSheet(ss) {
   writePair('ByIssueCategory', 'Rollup: hours, cost, entry count per issue category');
   writePair('ByIssueType', 'Rollup: hours, cost, entry count per issue type');
   writePair('IndividualLookup', 'Select an individual to see their tickets and activity detail');
-  writePair('LocationLookup', 'Select a location to see its agents, issue categories, and tickets');
+  writePair('LocationLookup', 'Select a location to see its agents, issue types, and tickets');
   writePair('AgentPivot', 'Per-agent hours broken down by labor type (Standard, Travel, Overtime, Weekend)');
   writePair('ZeroLabor', 'Closed tickets with zero labor hours logged (flag for review)');
   writePair('AgentByCategory', 'Cross-dimension: hours per agent broken down by issue category');
@@ -1154,13 +1154,13 @@ function setupLocationLookupSheet(ss) {
   // --- Layout ---
   // Row 1: title
   // Row 2: "Select Location" label + dropdown in B2
-  // Row 3: "Filter Issue Category" label + dropdown in B3 (blank = every category)
+  // Row 3: "Filter Issue Type" label + dropdown in B3 (blank = every issue type)
   // Row 4: period
   // Rows 5-6: summary (hours, cost, entries, tickets)
   // Row 7: overtime summary
   // Row 9: block headings, row 10: block column headers, row 11: block formulas
-  //   A-E agents, G-J issue categories, L-P tickets
-  // Columns R-S: hidden dropdown source lists
+  //   A-E agents, G-J issue types, L-P tickets
+  // Columns R-U: hidden helpers (two dropdown source lists + the split selection)
   //
   // The three blocks sit side by side rather than stacked because each one
   // spills an array of unknown height; stacking them would make the first
@@ -1181,39 +1181,55 @@ function setupLocationLookupSheet(ss) {
     .build();
   sheet.getRange('B2').setDataValidation(locationRule);
 
-  // --- Issue category filter ---
-  // Category rather than the "Category > Type" pairing IndividualLookup uses:
-  // category names are unique on their own, so one criterion is enough and the
-  // sheet avoids the split-the-selection helpers that pairing requires.
-  sheet.getRange('A3').setValue('Filter Issue Category').setFontWeight('bold');
-  sheet.getRange('C3').setValue('Leave blank for all issue categories')
+  // --- Issue type filter ---
+  // Listed as "Category > Type", the same pairing IndividualLookup uses: issue
+  // type names are not unique on their own — "Equipment Repair" and "Issue not
+  // listed" both recur under several categories — so a bare type name would
+  // silently merge unrelated work into one total. Category alone is too coarse
+  // in the other direction: a type like Kitchen Tasks is invisible inside its
+  // parent category. Subject is deliberately not the filter key either: it is
+  // free text the module generates in more than one format (the same work shows
+  // up as both "Facilities > Custodial > ..." and "Facilities - Custodial > ..."),
+  // so one issue type spans several different subject strings.
+  sheet.getRange('A3').setValue('Filter Issue Type').setFontWeight('bold');
+  sheet.getRange('C3').setValue('Leave blank for all issue types')
     .setFontStyle('italic').setFontColor('#666666');
 
   sheet.getRange('S2').setFormula(
-    '=SORT(UNIQUE(FILTER(ActivityLog!V2:V,ActivityLog!V2:V<>"",' +
+    '=SORT(UNIQUE(FILTER(ActivityLog!V2:V&" > "&ActivityLog!X2:X,' +
+    'ActivityLog!X2:X<>"",' +
     'ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6)))'
   );
 
-  const categoryRule = SpreadsheetApp.newDataValidation()
+  const issueTypeRule = SpreadsheetApp.newDataValidation()
     .requireValueInRange(sheet.getRange('S2:S'), true)
     .setAllowInvalid(true)
     .build();
-  sheet.getRange('B3').setDataValidation(categoryRule);
+  sheet.getRange('B3').setDataValidation(issueTypeRule);
+
+  // Split the selection back into category and type so every rollup below can
+  // match ActivityLog!V and ActivityLog!X as separate criteria. Matching the
+  // concatenation instead would push array arithmetic into each formula, which
+  // is the documented way to poison a LET/HSTACK sheet with #N/A.
+  sheet.getRange('T2').setFormula('=IFERROR(TRIM(LEFT($B$3,FIND(" > ",$B$3)-1)),"")');
+  sheet.getRange('U2').setFormula('=IFERROR(TRIM(MID($B$3,FIND(" > ",$B$3)+3,500)),"")');
 
   // Wraps a metric so an empty filter reproduces the unfiltered formula exactly:
-  // {C} is where the extra SUMIFS/COUNTIFS criteria pair gets spliced in.
-  function categoryAware(template) {
+  // {C} is where the two extra SUMIFS/COUNTIFS criteria get spliced in.
+  function issueAware(template) {
     return '=IF($B$2="","",IF($B$3="",' +
       template.replace('{C}', '') + ',' +
-      template.replace('{C}', ',ActivityLog!V:V,$B$3') + '))';
+      template.replace('{C}', ',ActivityLog!V:V,$T$2,ActivityLog!X:X,$U$2') + '))';
   }
 
   // FILTER form of the same idea — collapses to an always-true array when no
-  // category is selected.
-  const CAT_COND = 'IF($B$3="",ActivityLog!D2:D<>"",ActivityLog!V2:V=$B$3)';
+  // issue type is selected.
+  const ISSUE_COND =
+    'IF($B$3="",ActivityLog!D2:D<>"",ActivityLog!V2:V=$T$2),' +
+    'IF($B$3="",ActivityLog!D2:D<>"",ActivityLog!X2:X=$U$2)';
 
   // SUMPRODUCT form, for the overtime row.
-  const CAT_TERM = '*IF($B$3="",1,(ActivityLog!V$2:V=$B$3))';
+  const ISSUE_TERM = '*IF($B$3="",1,(ActivityLog!V$2:V=$T$2)*(ActivityLog!X$2:X=$U$2))';
 
   const DATE_CRIT =
     'ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6';
@@ -1230,16 +1246,16 @@ function setupLocationLookupSheet(ss) {
   // Summary (rows 5-6). Hours come from NetHours (col Z), not raw EffortHours,
   // so a ticket carrying both labor rows and action rows is counted once.
   sheet.getRange('A5').setValue('Total Hours').setFontWeight('bold');
-  sheet.getRange('B5').setFormula(categoryAware(
+  sheet.getRange('B5').setFormula(issueAware(
     'SUMIFS(ActivityLog!Z:Z,ActivityLog!T:T,$B$2,' + DATE_CRIT + '{C})'
   ));
   sheet.getRange('C5').setValue('Total Cost').setFontWeight('bold');
-  sheet.getRange('D5').setFormula(categoryAware(
+  sheet.getRange('D5').setFormula(issueAware(
     'SUMIFS(ActivityLog!H:H,ActivityLog!T:T,$B$2,' + DATE_CRIT + '{C})'
   ));
 
   sheet.getRange('A6').setValue('Entries').setFontWeight('bold');
-  sheet.getRange('B6').setFormula(categoryAware(
+  sheet.getRange('B6').setFormula(issueAware(
     'COUNTIFS(ActivityLog!T:T,$B$2,' + DATE_CRIT + '{C})'
   ));
   sheet.getRange('C6').setValue('Tickets').setFontWeight('bold');
@@ -1248,7 +1264,7 @@ function setupLocationLookupSheet(ss) {
   // ticket for none.
   sheet.getRange('D6').setFormula(
     '=IF($B$2="","",IFERROR(ROWS(UNIQUE(FILTER(ActivityLog!B2:B,' +
-    'ActivityLog!T2:T=$B$2,' + DATE_COND + ',' + CAT_COND + '))),0))'
+    'ActivityLog!T2:T=$B$2,' + DATE_COND + ',' + ISSUE_COND + '))),0))'
   );
 
   // Overtime row (row 7) — auto-detected from the LaborTypes IsOvertime column.
@@ -1262,7 +1278,7 @@ function setupLocationLookupSheet(ss) {
     '*(ActivityLog!D$2:D>=DateFilters!$B$5)' +
     '*(ActivityLog!D$2:D<=DateFilters!$B$6)' +
     '*(COUNTIFS(LaborTypes!A$2:A,ActivityLog!I$2:I,LaborTypes!C$2:C,"TRUE"))' +
-    CAT_TERM;
+    ISSUE_TERM;
 
   function otMetric(measure) {
     return '=IF($B$2="","",IFERROR(SUMPRODUCT(' + OT_BASE + measure + '),0))';
@@ -1279,16 +1295,16 @@ function setupLocationLookupSheet(ss) {
 
   // --- Block headings and headers (rows 9-10) ---
   sheet.getRange('A9').setValue('Agents at This Location').setFontWeight('bold').setFontSize(11);
-  sheet.getRange('G9').setValue('By Issue Category').setFontWeight('bold').setFontSize(11);
+  sheet.getRange('G9').setValue('By Issue Type').setFontWeight('bold').setFontSize(11);
   sheet.getRange('L9').setValue('Tickets').setFontWeight('bold').setFontSize(11);
 
   const agentHeaders = ['Agent', 'Team', 'Hours', 'Cost', 'Entries'];
   sheet.getRange(10, 1, 1, agentHeaders.length).setValues([agentHeaders]);
   sheet.getRange(10, 1, 1, agentHeaders.length).setFontWeight('bold');
 
-  const categoryHeaders = ['Issue Category', 'Hours', 'Cost', 'Entries'];
-  sheet.getRange(10, 7, 1, categoryHeaders.length).setValues([categoryHeaders]);
-  sheet.getRange(10, 7, 1, categoryHeaders.length).setFontWeight('bold');
+  const issueHeaders = ['Issue Category > Issue Type', 'Hours', 'Cost', 'Entries'];
+  sheet.getRange(10, 7, 1, issueHeaders.length).setValues([issueHeaders]);
+  sheet.getRange(10, 7, 1, issueHeaders.length).setFontWeight('bold');
 
   const ticketHeaders = ['TicketNumber', 'Subject', 'Hours', 'Cost', 'Entries'];
   sheet.getRange(10, 12, 1, ticketHeaders.length).setValues([ticketHeaders]);
@@ -1303,7 +1319,7 @@ function setupLocationLookupSheet(ss) {
   const agentFormula = '=IF($B$2="","Select a location from the dropdown above.",' +
     'IFERROR(LET(' +
     'rows,FILTER(HSTACK(ActivityLog!N2:N,ActivityLog!R2:R,ActivityLog!Z2:Z,ActivityLog!H2:H),' +
-      'ActivityLog!T2:T=$B$2,ActivityLog!N2:N<>"",' + DATE_COND + ',' + CAT_COND + '),' +
+      'ActivityLog!T2:T=$B$2,ActivityLog!N2:N<>"",' + DATE_COND + ',' + ISSUE_COND + '),' +
     'who,CHOOSECOLS(rows,1),' +
     'agents,UNIQUE(who),' +
     'teams,BYROW(agents,LAMBDA(a,IFERROR(INDEX(CHOOSECOLS(rows,2),MATCH(a,who,0)),""))),' +
@@ -1315,20 +1331,24 @@ function setupLocationLookupSheet(ss) {
 
   sheet.getRange(11, 1).setFormula(agentFormula);
 
-  // --- Issue category block (G11) ---
-  const categoryFormula = '=IF($B$2="","",' +
+  // --- Issue type block (G11) ---
+  // Grouped at "Category > Type" grain to match the dropdown. Category alone
+  // buries the thing being asked about: a type like Kitchen Tasks shows up only
+  // as part of its parent category's total, so the block could never answer how
+  // much of a location's labor went to it.
+  const issueFormula = '=IF($B$2="","",' +
     'IFERROR(LET(' +
-    'rows,FILTER(HSTACK(ActivityLog!V2:V,ActivityLog!Z2:Z,ActivityLog!H2:H),' +
-      'ActivityLog!T2:T=$B$2,ActivityLog!V2:V<>"",' + DATE_COND + ',' + CAT_COND + '),' +
-    'cat,CHOOSECOLS(rows,1),' +
-    'cats,UNIQUE(cat),' +
-    'hrs,BYROW(cats,LAMBDA(c,IFERROR(SUM(FILTER(CHOOSECOLS(rows,2),cat=c)),0))),' +
-    'cst,BYROW(cats,LAMBDA(c,IFERROR(SUM(FILTER(CHOOSECOLS(rows,3),cat=c)),0))),' +
-    'ent,BYROW(cats,LAMBDA(c,IFERROR(ROWS(FILTER(cat,cat=c)),0))),' +
-    'IFERROR(SORT(HSTACK(cats,hrs,cst,ent),2,FALSE),HSTACK(cats,hrs,cst,ent))' +
-    '),"No issue categories found."))';
+    'rows,FILTER(HSTACK(ActivityLog!V2:V&" > "&ActivityLog!X2:X,ActivityLog!Z2:Z,ActivityLog!H2:H),' +
+      'ActivityLog!T2:T=$B$2,ActivityLog!X2:X<>"",' + DATE_COND + ',' + ISSUE_COND + '),' +
+    'lbl,CHOOSECOLS(rows,1),' +
+    'types,UNIQUE(lbl),' +
+    'hrs,BYROW(types,LAMBDA(k,IFERROR(SUM(FILTER(CHOOSECOLS(rows,2),lbl=k)),0))),' +
+    'cst,BYROW(types,LAMBDA(k,IFERROR(SUM(FILTER(CHOOSECOLS(rows,3),lbl=k)),0))),' +
+    'ent,BYROW(types,LAMBDA(k,IFERROR(ROWS(FILTER(lbl,lbl=k)),0))),' +
+    'IFERROR(SORT(HSTACK(types,hrs,cst,ent),2,FALSE),HSTACK(types,hrs,cst,ent))' +
+    '),"No issue types found."))';
 
-  sheet.getRange(11, 7).setFormula(categoryFormula);
+  sheet.getRange(11, 7).setFormula(issueFormula);
 
   // --- Tickets block (L11) ---
   // Subject comes from RawData because ActivityLog does not carry it; that is
@@ -1336,7 +1356,7 @@ function setupLocationLookupSheet(ss) {
   const ticketFormula = '=IF($B$2="","",' +
     'IFERROR(LET(' +
     'rows,FILTER(HSTACK(ActivityLog!B2:B,ActivityLog!C2:C,ActivityLog!Z2:Z,ActivityLog!H2:H),' +
-      'ActivityLog!T2:T=$B$2,' + DATE_COND + ',' + CAT_COND + '),' +
+      'ActivityLog!T2:T=$B$2,' + DATE_COND + ',' + ISSUE_COND + '),' +
     'tid,CHOOSECOLS(rows,1),' +
     'ids,UNIQUE(tid),' +
     'nums,BYROW(ids,LAMBDA(id,IFERROR(INDEX(CHOOSECOLS(rows,2),MATCH(id,tid,0)),"?"))),' +
@@ -1349,15 +1369,15 @@ function setupLocationLookupSheet(ss) {
 
   sheet.getRange(11, 12).setFormula(ticketFormula);
 
-  // Hide the helper columns R-S (the two dropdown source lists)
-  sheet.hideColumns(18, 2);
+  // Hide the helper columns R-U (dropdown source lists + the split selection)
+  sheet.hideColumns(18, 4);
 
   // Column widths
   sheet.setColumnWidth(1, 200);   // Agent / row labels
-  sheet.setColumnWidth(2, 240);   // holds both dropdowns
+  sheet.setColumnWidth(2, 260);   // holds both dropdowns; issue type values are long
   sheet.setColumnWidth(3, 200);   // "Total Cost" label / the filter hint
   sheet.setColumnWidth(6, 24);    // spacer before the category block
-  sheet.setColumnWidth(7, 250);   // Issue Category
+  sheet.setColumnWidth(7, 300);   // Issue Category > Issue Type
   sheet.setColumnWidth(11, 24);   // spacer before the ticket block
   sheet.setColumnWidth(12, 140);  // TicketNumber
   sheet.setColumnWidth(13, 250);  // Subject
