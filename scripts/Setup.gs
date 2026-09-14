@@ -1341,10 +1341,20 @@ function setupLocationLookupSheet(ss) {
     'rows,FILTER(HSTACK(ActivityLog!V2:V&" > "&ActivityLog!X2:X,ActivityLog!Z2:Z,ActivityLog!H2:H),' +
       'ActivityLog!T2:T=$B$2,ActivityLog!X2:X<>"",' + DATE_COND + ',' + ISSUE_COND + '),' +
     'lbl,CHOOSECOLS(rows,1),' +
-    'types,UNIQUE(lbl),' +
-    'hrs,BYROW(types,LAMBDA(k,IFERROR(SUM(FILTER(CHOOSECOLS(rows,2),lbl=k)),0))),' +
-    'cst,BYROW(types,LAMBDA(k,IFERROR(SUM(FILTER(CHOOSECOLS(rows,3),lbl=k)),0))),' +
-    'ent,BYROW(types,LAMBDA(k,IFERROR(ROWS(FILTER(lbl,lbl=k)),0))),' +
+    // Case-insensitive de-dup. UNIQUE is case-SENSITIVE, so "Issue Not Listed"
+    // and "Issue not listed" would list as two rows, while the "=" comparison
+    // below is case-INSENSITIVE and would sum both variants into each of them —
+    // the block would then total twice the location's real hours. Uppercase via
+    // MAP (UPPER alone is not array-aware and returns only the first cell), then
+    // UNIQUE, so variants collapse to one row.
+    'keys,UNIQUE(MAP(lbl,LAMBDA(x,UPPER(x)))),' +
+    // Display the first spelling actually seen rather than the uppercased key:
+    // MATCH is case-insensitive, so it finds the original casing. ByIssueCategory
+    // shows uppercase labels for want of this step.
+    'types,BYROW(keys,LAMBDA(k,IFERROR(INDEX(lbl,MATCH(k,lbl,0)),k))),' +
+    'hrs,BYROW(keys,LAMBDA(k,IFERROR(SUM(FILTER(CHOOSECOLS(rows,2),lbl=k)),0))),' +
+    'cst,BYROW(keys,LAMBDA(k,IFERROR(SUM(FILTER(CHOOSECOLS(rows,3),lbl=k)),0))),' +
+    'ent,BYROW(keys,LAMBDA(k,IFERROR(ROWS(FILTER(lbl,lbl=k)),0))),' +
     'IFERROR(SORT(HSTACK(types,hrs,cst,ent),2,FALSE),HSTACK(types,hrs,cst,ent))' +
     '),"No issue types found."))';
 
