@@ -1,6 +1,6 @@
 {
-  "version": "1.1.1",
-  "released": "2026-07-01",
+  "version": "1.1.2",
+  "released": "2026-09-30",
   "releaseUrl": "https://github.com/scopousiiq/iiq-labor-to-sheets/releases/latest",
-  "message": "Fixes white font on a white background on the ActivityLog and other banded data tabs. Existing installs: re-run iiQ Labor > Setup > Regenerate Analytics Sheets (or Run Complete Setup) to repair the display."
+  "message": "Reports now include work logged on the last day of the selected date range (it was being left out). Adds a LocationLookup sheet for labor by location and an issue type filter on IndividualLookup. Existing installs: run iiQ Labor > Setup > Regenerate Analytics Sheets. No data reload needed."
 }
