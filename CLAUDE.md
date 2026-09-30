@@ -227,6 +227,7 @@ Analytics sheets use **ActivityLog** as the data source with **DateFilters** for
 - All formulas reference **Name columns** (not ID columns) for `UNIQUE`/`COUNTIFS`
 - Key column references in formulas: `R` = TeamName, `N` = PerformedByUser, `T` = LocationName, `J` = LaborTypeName, `L` = ResolutionActionName, `V` = IssueCategoryName, `X` = IssueTypeName, `F` = EffortHours, `H` = LaborCost, `D` = ActivityDate, `B` = TicketId, `Y` = EntryType, `Z` = NetHours
 - Sum `Z` (NetHours) for hours, not `F` — see the ActivityLog column layout below
+- Bound the end of a date range with `< endD+1` (SUMIFS: `"<"&(endD+1)`; QUERY: `Col4<date` of `endD+1`), never `<= endD`. `DateFilters!B6` is a bare date at midnight while `ActivityDate` carries a time, so `<=` silently drops the whole last day
 - To slice a multi-column LET variable use `CHOOSECOLS(raw,4,5,6)`. `INDEX(raw,,{4,5,6})` returns only the first of those columns, with no error to signal it
 
 ## Changelog

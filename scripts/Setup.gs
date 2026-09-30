@@ -732,7 +732,9 @@ function setupDateFiltersSheet(ss) {
   );
 
   // Calculated End — modes that end before today get explicit end dates;
-  // all "This" modes default to TODAY()
+  // all "This" modes default to TODAY().
+  // B6 is a bare date (midnight) while ActivityDate carries a time of day, so
+  // every consumer compares `< B6+1`; `<= B6` would drop the whole end day.
   sheet.getRange('B6').setFormula(
     '=SWITCH(B2,' +
     '"Manual",B4,' +
@@ -838,11 +840,11 @@ function setupByTeamSheet(ss) {
   const formula = '=LET(' +
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
-    'teams,UNIQUE(FILTER(ActivityLog!R2:R,ActivityLog!R2:R<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
-    'hours,BYROW(teams,LAMBDA(t,SUMIFS(ActivityLog!Z:Z,ActivityLog!R:R,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'cost,BYROW(teams,LAMBDA(t,SUMIFS(ActivityLog!H:H,ActivityLog!R:R,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'entries,BYROW(teams,LAMBDA(t,COUNTIFS(ActivityLog!R:R,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'tickets,BYROW(teams,LAMBDA(t,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!R2:R=t,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
+    'teams,UNIQUE(FILTER(ActivityLog!R2:R,ActivityLog!R2:R<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1)),' +
+    'hours,BYROW(teams,LAMBDA(t,SUMIFS(ActivityLog!Z:Z,ActivityLog!R:R,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'cost,BYROW(teams,LAMBDA(t,SUMIFS(ActivityLog!H:H,ActivityLog!R:R,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'entries,BYROW(teams,LAMBDA(t,COUNTIFS(ActivityLog!R:R,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'tickets,BYROW(teams,LAMBDA(t,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!R2:R=t,ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1)),0))),' +
     'avg,MAP(hours,tickets,LAMBDA(h,t,IF(t>0,h/t,0))),' +
     'SORT(IFERROR(HSTACK(teams,hours,cost,entries,tickets,avg),0),2,FALSE)' +
     ')';
@@ -862,12 +864,12 @@ function setupByIndividualSheet(ss) {
   const formula = '=LET(' +
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
-    'users,UNIQUE(FILTER(ActivityLog!N2:N,ActivityLog!N2:N<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
+    'users,UNIQUE(FILTER(ActivityLog!N2:N,ActivityLog!N2:N<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1)),' +
     'teams,BYROW(users,LAMBDA(u,IFERROR(INDEX(ActivityLog!R:R,MATCH(u,ActivityLog!N:N,0)),""))),' +
-    'hours,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!Z:Z,ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'cost,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!H:H,ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'entries,BYROW(users,LAMBDA(u,COUNTIFS(ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'tickets,BYROW(users,LAMBDA(u,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!N2:N=u,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
+    'hours,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!Z:Z,ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'cost,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!H:H,ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'entries,BYROW(users,LAMBDA(u,COUNTIFS(ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'tickets,BYROW(users,LAMBDA(u,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!N2:N=u,ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1)),0))),' +
     'avg,MAP(hours,tickets,LAMBDA(h,t,IF(t>0,h/t,0))),' +
     'SORT(IFERROR(HSTACK(users,teams,hours,cost,entries,tickets,avg),0),3,FALSE)' +
     ')';
@@ -887,11 +889,11 @@ function setupByDepartmentSheet(ss) {
   const formula = '=LET(' +
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
-    'locs,UNIQUE(FILTER(ActivityLog!T2:T,ActivityLog!T2:T<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
-    'hours,BYROW(locs,LAMBDA(l,SUMIFS(ActivityLog!Z:Z,ActivityLog!T:T,l,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'cost,BYROW(locs,LAMBDA(l,SUMIFS(ActivityLog!H:H,ActivityLog!T:T,l,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'entries,BYROW(locs,LAMBDA(l,COUNTIFS(ActivityLog!T:T,l,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'tickets,BYROW(locs,LAMBDA(l,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!T2:T=l,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
+    'locs,UNIQUE(FILTER(ActivityLog!T2:T,ActivityLog!T2:T<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1)),' +
+    'hours,BYROW(locs,LAMBDA(l,SUMIFS(ActivityLog!Z:Z,ActivityLog!T:T,l,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'cost,BYROW(locs,LAMBDA(l,SUMIFS(ActivityLog!H:H,ActivityLog!T:T,l,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'entries,BYROW(locs,LAMBDA(l,COUNTIFS(ActivityLog!T:T,l,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'tickets,BYROW(locs,LAMBDA(l,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!T2:T=l,ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1)),0))),' +
     'avg,MAP(hours,tickets,LAMBDA(h,t,IF(t>0,h/t,0))),' +
     'SORT(IFERROR(HSTACK(locs,hours,cost,entries,tickets,avg),0),2,FALSE)' +
     ')';
@@ -911,13 +913,13 @@ function setupByLaborTypeSheet(ss) {
   const formula = '=LET(' +
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
-    'types,UNIQUE(FILTER(ActivityLog!J2:J,ActivityLog!J2:J<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
+    'types,UNIQUE(FILTER(ActivityLog!J2:J,ActivityLog!J2:J<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1)),' +
     // EffortHours is right here, unlike the other rollups: a labor type name only
     // exists on labor rows, and NetHours equals EffortHours on every labor row.
-    'hours,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!F:F,ActivityLog!J:J,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'cost,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!H:H,ActivityLog!J:J,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'entries,BYROW(types,LAMBDA(t,COUNTIFS(ActivityLog!J:J,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'tickets,BYROW(types,LAMBDA(t,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!J2:J=t,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
+    'hours,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!F:F,ActivityLog!J:J,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'cost,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!H:H,ActivityLog!J:J,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'entries,BYROW(types,LAMBDA(t,COUNTIFS(ActivityLog!J:J,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'tickets,BYROW(types,LAMBDA(t,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!J2:J=t,ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1)),0))),' +
     'avg,MAP(hours,tickets,LAMBDA(h,t,IF(t>0,h/t,0))),' +
     'SORT(IFERROR(HSTACK(types,hours,cost,entries,tickets,avg),0),2,FALSE)' +
     ')';
@@ -948,7 +950,7 @@ function setupIndividualLookupSheet(ss) {
 
   // Dynamic dropdown: individuals active in the filtered date range
   const dropdownFormula =
-    '=SORT(UNIQUE(FILTER(ActivityLog!N2:N,ActivityLog!N2:N<>"",ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6)))';
+    '=SORT(UNIQUE(FILTER(ActivityLog!N2:N,ActivityLog!N2:N<>"",ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<DateFilters!$B$6+1)))';
   sheet.getRange('P2').setFormula(dropdownFormula);
 
   // Data validation referencing the dynamic list
@@ -970,7 +972,7 @@ function setupIndividualLookupSheet(ss) {
 
   sheet.getRange('Q2').setFormula(
     '=SORT(UNIQUE(FILTER(ActivityLog!V2:V&" > "&ActivityLog!X2:X,' +
-    'ActivityLog!X2:X<>"",ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6)))'
+    'ActivityLog!X2:X<>"",ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<DateFilters!$B$6+1)))'
   );
 
   const issueTypeRule = SpreadsheetApp.newDataValidation()
@@ -1005,7 +1007,7 @@ function setupIndividualLookupSheet(ss) {
     '*IF($B$3="",1,(ActivityLog!V$2:V=$R$2)*(ActivityLog!X$2:X=$S$2))';
 
   const DATE_CRIT =
-    'ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6';
+    'ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<"&(DateFilters!$B$6+1)';
 
   // Period (row 4)
   sheet.getRange('A4').setValue('Period').setFontWeight('bold');
@@ -1032,7 +1034,7 @@ function setupIndividualLookupSheet(ss) {
   // applied an empty result is routine, so this would report 1 ticket for none.
   sheet.getRange('D6').setFormula(
     '=IF($B$2="","",IFERROR(ROWS(UNIQUE(FILTER(ActivityLog!B2:B,' +
-    'ActivityLog!N2:N=$B$2,ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6,' +
+    'ActivityLog!N2:N=$B$2,ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<DateFilters!$B$6+1,' +
     ISSUE_COND + '))),0))'
   );
 
@@ -1045,7 +1047,7 @@ function setupIndividualLookupSheet(ss) {
   const OT_BASE =
     '(ActivityLog!N$2:N=$B$2)' +
     '*(ActivityLog!D$2:D>=DateFilters!$B$5)' +
-    '*(ActivityLog!D$2:D<=DateFilters!$B$6)' +
+    '*(ActivityLog!D$2:D<DateFilters!$B$6+1)' +
     '*(COUNTIFS(LaborTypes!A$2:A,ActivityLog!I$2:I,LaborTypes!C$2:C,"TRUE"))' +
     ISSUE_TERM;
 
@@ -1079,7 +1081,7 @@ function setupIndividualLookupSheet(ss) {
     'endD,DateFilters!$B$6,' +
     'raw,SORT(FILTER(' +
     'HSTACK(ActivityLog!C2:C,ActivityLog!B2:B,ActivityLog!D2:D,ActivityLog!Z2:Z,ActivityLog!H2:H,ActivityLog!J2:J,ActivityLog!L2:L,ActivityLog!Y2:Y,ActivityLog!O2:O),' +
-    'ActivityLog!N2:N=$B$2,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD,' + ISSUE_COND +
+    'ActivityLog!N2:N=$B$2,ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1,' + ISSUE_COND +
     '),3,FALSE),' +
     'tNums,INDEX(raw,,1),' +
     'tIds,INDEX(raw,,2),' +
@@ -1107,12 +1109,12 @@ function setupIndividualLookupSheet(ss) {
     'IFERROR(LET(' +
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
-    'ids,UNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!N2:N=$B$2,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD,' + ISSUE_COND + ')),' +
+    'ids,UNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!N2:N=$B$2,ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1,' + ISSUE_COND + ')),' +
     'nums,BYROW(ids,LAMBDA(id,IFERROR(INDEX(ActivityLog!C:C,MATCH(id,ActivityLog!B:B,0)),"?"))),' +
     'subjs,BYROW(ids,LAMBDA(id,IFERROR(INDEX(RawData!C:C,MATCH(id,RawData!A:A,0)),"?"))),' +
-    'hours,BYROW(ids,LAMBDA(id,SUMIFS(ActivityLog!Z:Z,ActivityLog!B:B,id,ActivityLog!N:N,$B$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'cost,BYROW(ids,LAMBDA(id,SUMIFS(ActivityLog!H:H,ActivityLog!B:B,id,ActivityLog!N:N,$B$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'entries,BYROW(ids,LAMBDA(id,COUNTIFS(ActivityLog!B:B,id,ActivityLog!N:N,$B$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'hours,BYROW(ids,LAMBDA(id,SUMIFS(ActivityLog!Z:Z,ActivityLog!B:B,id,ActivityLog!N:N,$B$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'cost,BYROW(ids,LAMBDA(id,SUMIFS(ActivityLog!H:H,ActivityLog!B:B,id,ActivityLog!N:N,$B$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'entries,BYROW(ids,LAMBDA(id,COUNTIFS(ActivityLog!B:B,id,ActivityLog!N:N,$B$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
     'IFERROR(SORT(HSTACK(nums,subjs,hours,cost,entries),3,FALSE),HSTACK(nums,subjs,hours,cost,entries))' +
     '),"No tickets found."))';
 
@@ -1173,7 +1175,7 @@ function setupLocationLookupSheet(ss) {
   // Dynamic dropdown: locations with activity in the filtered date range
   sheet.getRange('R2').setFormula(
     '=SORT(UNIQUE(FILTER(ActivityLog!T2:T,ActivityLog!T2:T<>"",' +
-    'ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6)))'
+    'ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<DateFilters!$B$6+1)))'
   );
 
   const locationRule = SpreadsheetApp.newDataValidation()
@@ -1198,7 +1200,7 @@ function setupLocationLookupSheet(ss) {
   sheet.getRange('S2').setFormula(
     '=SORT(UNIQUE(FILTER(ActivityLog!V2:V&" > "&ActivityLog!X2:X,' +
     'ActivityLog!X2:X<>"",' +
-    'ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6)))'
+    'ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<DateFilters!$B$6+1)))'
   );
 
   const issueTypeRule = SpreadsheetApp.newDataValidation()
@@ -1232,10 +1234,10 @@ function setupLocationLookupSheet(ss) {
   const ISSUE_TERM = '*IF($B$3="",1,(ActivityLog!V$2:V=$T$2)*(ActivityLog!X$2:X=$U$2))';
 
   const DATE_CRIT =
-    'ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6';
+    'ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<"&(DateFilters!$B$6+1)';
 
   const DATE_COND =
-    'ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6';
+    'ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<DateFilters!$B$6+1';
 
   // Period (row 4)
   sheet.getRange('A4').setValue('Period').setFontWeight('bold');
@@ -1276,7 +1278,7 @@ function setupLocationLookupSheet(ss) {
   const OT_BASE =
     '(ActivityLog!T$2:T=$B$2)' +
     '*(ActivityLog!D$2:D>=DateFilters!$B$5)' +
-    '*(ActivityLog!D$2:D<=DateFilters!$B$6)' +
+    '*(ActivityLog!D$2:D<DateFilters!$B$6+1)' +
     '*(COUNTIFS(LaborTypes!A$2:A,ActivityLog!I$2:I,LaborTypes!C$2:C,"TRUE"))' +
     ISSUE_TERM;
 
@@ -1419,16 +1421,16 @@ function setupByResolutionSheet(ss) {
   const formula = '=LET(' +
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
-    'actions,UNIQUE(FILTER(ActivityLog!L2:L,ActivityLog!L2:L<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
+    'actions,UNIQUE(FILTER(ActivityLog!L2:L,ActivityLog!L2:L<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1)),' +
     // EffortHours, not NetHours: only action rows carry a resolution action, so
     // this is the action-only view of recorded time and is not meant to tie to
     // the de-duplicated total. Switching to NetHours would zero out any action
     // whose ticket also had a labor entry, making each action's hours depend on
     // something about the ticket rather than on the action.
-    'hours,BYROW(actions,LAMBDA(a,SUMIFS(ActivityLog!F:F,ActivityLog!L:L,a,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'cost,BYROW(actions,LAMBDA(a,SUMIFS(ActivityLog!H:H,ActivityLog!L:L,a,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'entries,BYROW(actions,LAMBDA(a,COUNTIFS(ActivityLog!L:L,a,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'tickets,BYROW(actions,LAMBDA(a,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!L2:L=a,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
+    'hours,BYROW(actions,LAMBDA(a,SUMIFS(ActivityLog!F:F,ActivityLog!L:L,a,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'cost,BYROW(actions,LAMBDA(a,SUMIFS(ActivityLog!H:H,ActivityLog!L:L,a,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'entries,BYROW(actions,LAMBDA(a,COUNTIFS(ActivityLog!L:L,a,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'tickets,BYROW(actions,LAMBDA(a,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!L2:L=a,ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1)),0))),' +
     'avg,MAP(hours,tickets,LAMBDA(h,t,IF(t>0,h/t,0))),' +
     'SORT(IFERROR(HSTACK(actions,hours,cost,entries,tickets,avg),0),2,FALSE)' +
     ')';
@@ -1455,11 +1457,11 @@ function setupByIssueCategorySheet(ss) {
     // returns only the first cell), then UNIQUE so case-variants collapse to one
     // row; SUMIFS matches all variants into it. (Labels show uppercase — the real
     // fix is normalizing category capitalization in iiQ.)
-    'cats,UNIQUE(MAP(FILTER(ActivityLog!V2:V,ActivityLog!V2:V<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD),LAMBDA(x,UPPER(x)))),' +
-    'hours,BYROW(cats,LAMBDA(c,SUMIFS(ActivityLog!Z:Z,ActivityLog!V:V,c,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'cost,BYROW(cats,LAMBDA(c,SUMIFS(ActivityLog!H:H,ActivityLog!V:V,c,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'entries,BYROW(cats,LAMBDA(c,COUNTIFS(ActivityLog!V:V,c,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'tickets,BYROW(cats,LAMBDA(c,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!V2:V=c,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
+    'cats,UNIQUE(MAP(FILTER(ActivityLog!V2:V,ActivityLog!V2:V<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1),LAMBDA(x,UPPER(x)))),' +
+    'hours,BYROW(cats,LAMBDA(c,SUMIFS(ActivityLog!Z:Z,ActivityLog!V:V,c,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'cost,BYROW(cats,LAMBDA(c,SUMIFS(ActivityLog!H:H,ActivityLog!V:V,c,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'entries,BYROW(cats,LAMBDA(c,COUNTIFS(ActivityLog!V:V,c,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'tickets,BYROW(cats,LAMBDA(c,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!V2:V=c,ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1)),0))),' +
     'avg,MAP(hours,tickets,LAMBDA(h,t,IF(t>0,h/t,0))),' +
     'SORT(IFERROR(HSTACK(cats,hours,cost,entries,tickets,avg),0),2,FALSE)' +
     ')';
@@ -1480,11 +1482,11 @@ function setupByIssueTypeSheet(ss) {
   const formula = '=LET(' +
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
-    'types,UNIQUE(FILTER(ActivityLog!X2:X,ActivityLog!X2:X<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
-    'hours,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!Z:Z,ActivityLog!X:X,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'cost,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!H:H,ActivityLog!X:X,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'entries,BYROW(types,LAMBDA(t,COUNTIFS(ActivityLog!X:X,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'tickets,BYROW(types,LAMBDA(t,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!X2:X=t,ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),0))),' +
+    'types,UNIQUE(FILTER(ActivityLog!X2:X,ActivityLog!X2:X<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1)),' +
+    'hours,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!Z:Z,ActivityLog!X:X,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'cost,BYROW(types,LAMBDA(t,SUMIFS(ActivityLog!H:H,ActivityLog!X:X,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'entries,BYROW(types,LAMBDA(t,COUNTIFS(ActivityLog!X:X,t,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'tickets,BYROW(types,LAMBDA(t,IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!X2:X=t,ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1)),0))),' +
     'avg,MAP(hours,tickets,LAMBDA(h,t,IF(t>0,h/t,0))),' +
     'SORT(IFERROR(HSTACK(types,hours,cost,entries,tickets,avg),0),2,FALSE)' +
     ')';
@@ -1500,7 +1502,7 @@ function setupByIssueTypeSheet(ss) {
 // via date literal syntax (same pattern as YearSummary).
 
 function buildDateClause_() {
-  return '" Col4>=date \'"&TEXT(startD,"yyyy-MM-dd")&"\' and Col4<=date \'"&TEXT(endD,"yyyy-MM-dd")&"\'"';
+  return '" Col4>=date \'"&TEXT(startD,"yyyy-MM-dd")&"\' and Col4<date \'"&TEXT(endD+1,"yyyy-MM-dd")&"\'"';
 }
 
 function setupAgentByCategorySheet(ss) {
@@ -1637,16 +1639,16 @@ function setupAgentPivotSheet(ss) {
   const formula = '=LET(' +
     'startD,DateFilters!$B$5,' +
     'endD,DateFilters!$B$6,' +
-    'users,UNIQUE(FILTER(ActivityLog!N2:N,ActivityLog!N2:N<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<=endD)),' +
+    'users,UNIQUE(FILTER(ActivityLog!N2:N,ActivityLog!N2:N<>"",ActivityLog!D2:D>=startD,ActivityLog!D2:D<endD+1)),' +
     'teams,BYROW(users,LAMBDA(u,IFERROR(INDEX(ActivityLog!R:R,MATCH(u,ActivityLog!N:N,0)),"---"))),' +
     // The per-type columns sum EffortHours because a labor type name only appears
     // on labor rows, where it equals NetHours. Total uses NetHours across all
     // rows, so "Other" absorbs the action-row hours and the row still adds up.
-    'stdH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$C$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'trvH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$D$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'otH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$E$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'wkndH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$F$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
-    'total,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!Z:Z,ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<="&endD))),' +
+    'stdH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$C$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'trvH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$D$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'otH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$E$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'wkndH,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!F:F,ActivityLog!N:N,u,ActivityLog!J:J,$F$2,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
+    'total,BYROW(users,LAMBDA(u,SUMIFS(ActivityLog!Z:Z,ActivityLog!N:N,u,ActivityLog!D:D,">="&startD,ActivityLog!D:D,"<"&(endD+1)))),' +
     'other,MAP(total,stdH,trvH,otH,wkndH,LAMBDA(t,s,r,o,w,t-s-r-o-w)),' +
     'sCol,SWITCH($B$1,"Agent",1,"Team",2,$C$2,3,$D$2,4,$E$2,5,$F$2,6,"Other",7,8),' +
     'sAsc,$D$1="Ascending",' +
@@ -1681,7 +1683,7 @@ function setupZeroLaborSheet(ss) {
     'RawData!R2:R="Closed",' +
     'RawData!F2:F=0,' +
     'RawData!D2:D>=startD,' +
-    'RawData!D2:D<=endD' +
+    'RawData!D2:D<endD+1' +
     '),4,FALSE),' +
     '"No closed tickets with zero labor found in the selected date range."))';
 
@@ -1711,9 +1713,9 @@ function setupDashboardSheet(ss) {
   sheet.getRange(1, 1, 1, 2).setFontWeight('bold');
 
   sheet.getRange('B2').setFormula('=TEXT(DateFilters!B5,"MMM D, YYYY")&" - "&TEXT(DateFilters!B6,"MMM D, YYYY")');
-  sheet.getRange('B3').setFormula('=SUMIFS(ActivityLog!Z:Z,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6)');
-  sheet.getRange('B4').setFormula('=SUMIFS(ActivityLog!H:H,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<="&DateFilters!$B$6)');
-  sheet.getRange('B5').setFormula('=IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<=DateFilters!$B$6)),0)');
+  sheet.getRange('B3').setFormula('=SUMIFS(ActivityLog!Z:Z,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<"&(DateFilters!$B$6+1))');
+  sheet.getRange('B4').setFormula('=SUMIFS(ActivityLog!H:H,ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<"&(DateFilters!$B$6+1))');
+  sheet.getRange('B5').setFormula('=IFERROR(COUNTUNIQUE(FILTER(ActivityLog!B2:B,ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<DateFilters!$B$6+1)),0)');
   sheet.getRange('B6').setFormula('=IF(B5>0,B3/B5,0)');
   sheet.getRange('B7').setFormula('=IFERROR(INDEX(SORT(ByIndividual!A2:G,3,FALSE),1,1),"")');
   sheet.getRange('B8').setFormula('=IFERROR(INDEX(SORT(ByTeam!A2:F,2,FALSE),1,1),"")');
@@ -1743,7 +1745,7 @@ function setupYearSummarySheet(ss) {
     'syStart,DateFilters!$B$7,' +
     'syEnd,DateFilters!$B$8,' +
     'label,TEXT(syStart,"YYYY")&"-"&TEXT(syEnd,"YYYY"),' +
-    'dateClause," Col4>=date \'"&TEXT(syStart,"yyyy-MM-dd")&"\' and Col4<=date \'"&TEXT(syEnd,"yyyy-MM-dd")&"\'",' +
+    'dateClause," Col4>=date \'"&TEXT(syStart,"yyyy-MM-dd")&"\' and Col4<date \'"&TEXT(syEnd+1,"yyyy-MM-dd")&"\'",' +
     'empty,CHOOSE({1,2,3,4,5,6,7},"","","","","","",""),' +
 
     'teamResult,IFERROR(LET(' +

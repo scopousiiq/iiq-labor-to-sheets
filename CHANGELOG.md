@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-30 — Unreleased
+
+### Fixed
+- **Every report left out work logged on the last day of the selected date range.** Entries carry a time of day, but the range end is a plain date — midnight at the *start* of that day — and the formulas kept only entries at or before it. So for "Last Month" the final day of the month was missing, and for the "This …" ranges today's work didn't appear until tomorrow. Hours, cost, entry and ticket counts were all low by whatever was logged that day. Every date filter now runs through the end of the last day, on every rollup, both lookups, AgentPivot, ZeroLabor, the cross-dimension sheets, the Dashboard and YearSummary (whose school-year total also lost the final day). Existing sheets pick this up with **iiQ Labor → Setup → Regenerate Analytics Sheets** — no data reload needed. (`Setup.gs`)
+
 ## 2026-09-14 — Unreleased
 
 ### Added
