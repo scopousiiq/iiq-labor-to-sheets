@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-01 — Unreleased
+
+### Added
+- **The ticket's created date now appears next to the work date.** The IndividualLookup activity detail has a new `TicketCreatedDate` column right after `ActivityDate`, so you can see when the work was requested beside when it was done. The ActivityLog sheet has the same field as a new last column (AA, `TicketCreatedDate`). It goes at the end so that no existing column moves. Reports still count hours by the work date (`ActivityDate`); this is display only. (`Setup.gs`, `ActivityLog.gs`)
+
+### Changed
+- IndividualLookup's Ticket Summary moved one column right (from K to L) to make room. Its hidden helper columns moved from P–S to Q–T.
+
+### Upgrade notes
+- Existing sheets: **iiQ Labor → Setup → Regenerate Analytics Sheets** adds the IndividualLookup column, filled for every row, with no reload needed. The ActivityLog column fills in only for activity loaded or refreshed after the update, and its header is added by **Run Complete Setup**. For the column filled on every row, move to the current template and run a fresh load.
+
 ## 2026-09-30 — v1.1.2
 
 ### Added

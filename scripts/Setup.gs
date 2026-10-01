@@ -20,7 +20,12 @@ const ACTIVITY_HEADERS = [
   'IssueCategoryId', 'IssueCategoryName', 'IssueTypeId', 'IssueTypeName',
   // EntryType: 'Action' (resolution-action row) or 'Labor' (labor-entry row).
   // NetHours: de-duplicated effort used by all hours rollups (see computeNetHours).
-  'EntryType', 'NetHours'
+  'EntryType', 'NetHours',
+  // The ticket's CreatedDate, so a reader can see when the work was requested
+  // beside when it was done (ActivityDate). Appended rather than placed next to
+  // ActivityDate because every formula and load pass addresses these columns by
+  // position.
+  'TicketCreatedDate'
 ];
 
 // --- Helpers ---
@@ -940,9 +945,9 @@ function setupIndividualLookupSheet(ss) {
   // Row 4: period
   // Rows 5-6: summary (hours, cost, entries, tickets)
   // Row 7: overtime summary
-  // Row 8: detail headers (A-I) and "Ticket Summary" heading (K)
-  // Row 9+: detail formula; ticket summary headers in K9, its formula in K10
-  // Columns P-S: hidden helpers (two dropdown source lists + the split selection)
+  // Row 8: detail headers (A-J) and "Ticket Summary" heading (L)
+  // Row 9+: detail formula; ticket summary headers in L9, its formula in L10
+  // Columns Q-T: hidden helpers (two dropdown source lists + the split selection)
 
   sheet.getRange('A1').setValue('Individual Lookup').setFontWeight('bold').setFontSize(14);
 
@@ -951,11 +956,11 @@ function setupIndividualLookupSheet(ss) {
   // Dynamic dropdown: individuals active in the filtered date range
   const dropdownFormula =
     '=SORT(UNIQUE(FILTER(ActivityLog!N2:N,ActivityLog!N2:N<>"",ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<DateFilters!$B$6+1)))';
-  sheet.getRange('P2').setFormula(dropdownFormula);
+  sheet.getRange('Q2').setFormula(dropdownFormula);
 
   // Data validation referencing the dynamic list
   const dropdownRule = SpreadsheetApp.newDataValidation()
-    .requireValueInRange(sheet.getRange('P2:P'), true)
+    .requireValueInRange(sheet.getRange('Q2:Q'), true)
     .build();
   sheet.getRange('B2').setDataValidation(dropdownRule);
 
@@ -970,13 +975,13 @@ function setupIndividualLookupSheet(ss) {
   sheet.getRange('C3').setValue('Leave blank for all issue types')
     .setFontStyle('italic').setFontColor('#666666');
 
-  sheet.getRange('Q2').setFormula(
+  sheet.getRange('R2').setFormula(
     '=SORT(UNIQUE(FILTER(ActivityLog!V2:V&" > "&ActivityLog!X2:X,' +
     'ActivityLog!X2:X<>"",ActivityLog!D2:D>=DateFilters!$B$5,ActivityLog!D2:D<DateFilters!$B$6+1)))'
   );
 
   const issueTypeRule = SpreadsheetApp.newDataValidation()
-    .requireValueInRange(sheet.getRange('Q2:Q'), true)
+    .requireValueInRange(sheet.getRange('R2:R'), true)
     .setAllowInvalid(true)
     .build();
   sheet.getRange('B3').setDataValidation(issueTypeRule);
@@ -985,26 +990,26 @@ function setupIndividualLookupSheet(ss) {
   // match ActivityLog!V and ActivityLog!X as separate criteria. Matching the
   // concatenation instead would push array arithmetic into each formula, which
   // is the documented way to poison a LET/HSTACK sheet with #N/A.
-  sheet.getRange('R2').setFormula('=IFERROR(TRIM(LEFT($B$3,FIND(" > ",$B$3)-1)),"")');
-  sheet.getRange('S2').setFormula('=IFERROR(TRIM(MID($B$3,FIND(" > ",$B$3)+3,500)),"")');
+  sheet.getRange('S2').setFormula('=IFERROR(TRIM(LEFT($B$3,FIND(" > ",$B$3)-1)),"")');
+  sheet.getRange('T2').setFormula('=IFERROR(TRIM(MID($B$3,FIND(" > ",$B$3)+3,500)),"")');
 
   // Wraps a metric so an empty filter reproduces the pre-filter formula exactly:
   // {I} is where the two extra SUMIFS/COUNTIFS criteria get spliced in.
   function issueAware(template) {
     return '=IF($B$2="","",IF($B$3="",' +
       template.replace('{I}', '') + ',' +
-      template.replace('{I}', ',ActivityLog!V:V,$R$2,ActivityLog!X:X,$S$2') + '))';
+      template.replace('{I}', ',ActivityLog!V:V,$S$2,ActivityLog!X:X,$T$2') + '))';
   }
 
   // FILTER form of the same idea — collapses to an always-true array when no
   // issue type is selected.
   const ISSUE_COND =
-    'IF($B$3="",ActivityLog!D2:D<>"",ActivityLog!V2:V=$R$2),' +
-    'IF($B$3="",ActivityLog!D2:D<>"",ActivityLog!X2:X=$S$2)';
+    'IF($B$3="",ActivityLog!D2:D<>"",ActivityLog!V2:V=$S$2),' +
+    'IF($B$3="",ActivityLog!D2:D<>"",ActivityLog!X2:X=$T$2)';
 
   // SUMPRODUCT form, for the overtime row.
   const ISSUE_TERM =
-    '*IF($B$3="",1,(ActivityLog!V$2:V=$R$2)*(ActivityLog!X$2:X=$S$2))';
+    '*IF($B$3="",1,(ActivityLog!V$2:V=$S$2)*(ActivityLog!X$2:X=$T$2))';
 
   const DATE_CRIT =
     'ActivityLog!D:D,">="&DateFilters!$B$5,ActivityLog!D:D,"<"&(DateFilters!$B$6+1)';
@@ -1065,13 +1070,14 @@ function setupIndividualLookupSheet(ss) {
   sheet.getRange('G7').setFormula(otMetric(''));
 
   // Detail headers (row 8)
-  const detailHeaders = ['TicketNumber', 'Subject', 'ActivityDate', 'NetHours', 'LaborCost',
+  const detailHeaders = ['TicketNumber', 'Subject', 'ActivityDate', 'TicketCreatedDate', 'NetHours', 'LaborCost',
                          'LaborType', 'ResolutionAction', 'EntryType', 'Notes'];
   sheet.getRange(8, 1, 1, detailHeaders.length).setValues([detailHeaders]);
   sheet.getRange(8, 1, 1, detailHeaders.length).setFontWeight('bold');
 
   // Detail formula — filtered activity rows for the selected individual
-  // Uses LET to filter first, then MAP to look up Subject from RawData and TEXT for date formatting.
+  // Uses LET to filter first, then MAP to look up Subject and the ticket's CreatedDate
+  // from RawData (one MATCH per filtered row, shared by both) and TEXT for date formatting.
   // NetHours is shown instead of EffortHours so the column ties to Total Hours
   // above, and EntryType rides along so a superseded action row reading 0.00
   // is explicable rather than looking like missing data.
@@ -1085,25 +1091,27 @@ function setupIndividualLookupSheet(ss) {
     '),3,FALSE),' +
     'tNums,INDEX(raw,,1),' +
     'tIds,INDEX(raw,,2),' +
-    'subjs,MAP(tIds,LAMBDA(id,IFERROR(INDEX(RawData!C:C,MATCH(id,RawData!A:A,0)),""))),'+
+    'pos,MAP(tIds,LAMBDA(id,IFERROR(MATCH(id,RawData!A:A,0),0))),' +
+    'subjs,MAP(pos,LAMBDA(p,IF(p=0,"",INDEX(RawData!C:C,p)))),' +
+    'created,MAP(pos,LAMBDA(p,IF(p=0,"",IFERROR(TEXT(INDEX(RawData!D:D,p),"M/D/YYYY"),"")))),' +
     // MAP so TEXT() applies per row and the date column spills (a bare
     // TEXT(INDEX(raw,,3),...) returns only a scalar -> dates appeared on row 1 only).
     'dates,MAP(INDEX(raw,,3),LAMBDA(d,IF(d="","",TEXT(d,"M/D/YYYY")))),' +
     // CHOOSECOLS, not INDEX(raw,,{4,5,...}): an array column argument makes INDEX
     // return only its first column, so the trailing detail columns came back blank.
-    'HSTACK(tNums,subjs,dates,CHOOSECOLS(raw,4,5,6,7,8,9))' +
+    'HSTACK(tNums,subjs,dates,created,CHOOSECOLS(raw,4,5,6,7,8,9))' +
     '),"No activity entries found for this individual in the selected date range."))';
 
   sheet.getRange(9, 1).setFormula(detailFormula);
 
-  // Ticket summary beside the detail list, in column K with J left as a spacer.
+  // Ticket summary beside the detail list, in column L with K left as a spacer.
   // Issue category and type are ticket-level fields denormalized onto every
   // activity row, so restricting the id list is enough — the per-ticket sums
   // below cannot pick up hours belonging to a different issue type.
-  sheet.getRange(8, 11).setValue('Ticket Summary').setFontWeight('bold').setFontSize(11);
+  sheet.getRange(8, 12).setValue('Ticket Summary').setFontWeight('bold').setFontSize(11);
   const ticketSummaryHeaders = ['TicketNumber', 'Subject', 'Total Hours', 'Total Cost', 'Entries'];
-  sheet.getRange(9, 11, 1, ticketSummaryHeaders.length).setValues([ticketSummaryHeaders]);
-  sheet.getRange(9, 11, 1, ticketSummaryHeaders.length).setFontWeight('bold');
+  sheet.getRange(9, 12, 1, ticketSummaryHeaders.length).setValues([ticketSummaryHeaders]);
+  sheet.getRange(9, 12, 1, ticketSummaryHeaders.length).setFontWeight('bold');
 
   const ticketSummaryFormula = '=IF($B$2="","",' +
     'IFERROR(LET(' +
@@ -1118,25 +1126,26 @@ function setupIndividualLookupSheet(ss) {
     'IFERROR(SORT(HSTACK(nums,subjs,hours,cost,entries),3,FALSE),HSTACK(nums,subjs,hours,cost,entries))' +
     '),"No tickets found."))';
 
-  sheet.getRange(10, 11).setFormula(ticketSummaryFormula);
+  sheet.getRange(10, 12).setFormula(ticketSummaryFormula);
 
-  // Hide the helper columns P-S (two dropdown source lists + split selection)
-  sheet.hideColumns(16, 4);
+  // Hide the helper columns Q-T (two dropdown source lists + split selection)
+  sheet.hideColumns(17, 4);
 
   // Column widths
   sheet.setColumnWidth(1, 140);
   sheet.setColumnWidth(2, 240);  // holds both dropdowns; issue type values are long
   sheet.setColumnWidth(3, 200);  // "Total Cost" label / the filter hint
-  sheet.setColumnWidth(9, 250);  // Notes
-  sheet.setColumnWidth(10, 24);  // spacer between detail and ticket summary
-  sheet.setColumnWidth(11, 140);
-  sheet.setColumnWidth(12, 250); // Subject
-  sheet.setColumnWidth(13, 100);
+  sheet.setColumnWidth(4, 130);  // TicketCreatedDate
+  sheet.setColumnWidth(10, 250); // Notes
+  sheet.setColumnWidth(11, 24);  // spacer between detail and ticket summary
+  sheet.setColumnWidth(12, 140);
+  sheet.setColumnWidth(13, 250); // Subject
   sheet.setColumnWidth(14, 100);
-  sheet.setColumnWidth(15, 80);
+  sheet.setColumnWidth(15, 100);
+  sheet.setColumnWidth(16, 80);
 
-  formatSheetColumns(sheet, 9, [['D', FMT_DECIMAL], ['E', FMT_CURRENCY]]);
-  formatSheetColumns(sheet, 10, [['M', FMT_DECIMAL], ['N', FMT_CURRENCY], ['O', FMT_INTEGER]]);
+  formatSheetColumns(sheet, 9, [['E', FMT_DECIMAL], ['F', FMT_CURRENCY]]);
+  formatSheetColumns(sheet, 10, [['N', FMT_DECIMAL], ['O', FMT_CURRENCY], ['P', FMT_INTEGER]]);
   sheet.getRange('B5').setNumberFormat(FMT_DECIMAL);
   sheet.getRange('D5').setNumberFormat(FMT_CURRENCY);
   sheet.getRange('B6').setNumberFormat(FMT_INTEGER);

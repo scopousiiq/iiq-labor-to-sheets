@@ -342,7 +342,8 @@ function buildActivityRow(item, entry, ticketId, ticketContext, userMap, laborMa
     ticketContext.issueTypeId || '',
     ticketContext.issueTypeName || UNASSIGNED,
     entryType,
-    0  // NetHours placeholder — filled by computeNetHours() after the full load.
+    0,  // NetHours placeholder — filled by computeNetHours() after the full load.
+    ticketContext.createdDate || ''
   ];
 }
 
@@ -477,6 +478,7 @@ function buildTicketContextMap(rawSheet) {
     if (!ticketId) return;
     map[ticketId] = {
       ticketNumber: row[1],
+      createdDate: row[3],
       // Ticket's assigned user/team — used for attribution so reports reflect the
       // ticket assignment, not the performing user's home team. (RawData cols:
       // 10=AssignedUser, 12=AssignedTeam, 18=AssignedUserId, 19=AssignedTeamId)

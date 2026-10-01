@@ -82,7 +82,7 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 - **Destructive op safety:** `requireNoTriggers()` gates `startFullReloadWithConfirm()` to prevent trigger interference during data clearing.
 - **Load state machine:** Each data type has `LOAD_STATE_<TYPE>` in Config. The orchestrator finds the next pending load respecting group ordering.
 - **Batched sheet writes:** Both ticket and activity upserts collect updates into `{rowNumber: rowData}` maps and write consecutive rows in single `setValues()` calls via shared `writeBatchedUpdates()`.
-- **Header constants:** `RAWDATA_HEADERS` (25 cols) and `ACTIVITY_HEADERS` (26 cols) in `Setup.gs` are the single source of truth for column counts.
+- **Header constants:** `RAWDATA_HEADERS` (25 cols) and `ACTIVITY_HEADERS` (27 cols) in `Setup.gs` are the single source of truth for column counts.
 - **Analytics idempotency:** Analytics sheets use `deleteSheetIfExists()` + recreate pattern. Data sheets use skip-if-exists. "Regenerate Analytics Sheets" menu item rebuilds all formula sheets.
 - **Date formatting for API:** `formatDateForApi()` produces `M/D/YYYY` format required by IIQ filter facets.
 - **BI-safe values:** `IsClosed` stored as `'Closed'`/`'Open'` (not boolean). `IsPublic` stored as `1`/`0` (not boolean).
@@ -118,7 +118,7 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 | 24 | X | IssueTypeId | `t.IssueType.IssueTypeId` |
 | 25 | Y | IssueTypeName | `t.IssueType.Name` |
 
-## ActivityLog Column Layout (26 columns)
+## ActivityLog Column Layout (27 columns)
 
 | Col | Letter | Header | Source |
 |-----|--------|--------|--------|
@@ -148,6 +148,7 @@ This is a **Google Apps Script** project. All `.gs` files in `scripts/` are depl
 | 24 | X | IssueTypeName | from `ticketMap` |
 | 25 | Y | EntryType | `computeNetHours()` — `'Labor'` or `'Action'` |
 | 26 | Z | NetHours | `computeNetHours()` — de-duplicated effort |
+| 27 | AA | TicketCreatedDate | from `ticketMap` (RawData `CreatedDate`) |
 
 `NetHours` is the hours column every rollup should sum. When a ticket carries at
 least one labor row, its resolution-action rows are set to 0 so the same effort
@@ -157,7 +158,10 @@ to labor rows — a labor type name or a LaborTypeId criterion does that, a
 resolution action name does not.
 
 Columns U–X are ticket-level fields denormalized onto every activity row, so all
-activity rows for one ticket share the same issue category and type.
+activity rows for one ticket share the same issue category and type. AA
+(TicketCreatedDate) is denormalized the same way. It sits at the end rather than
+beside ActivityDate because formulas and load passes address columns by
+position — append new ActivityLog columns, never insert.
 
 ## Config Key Reference
 
