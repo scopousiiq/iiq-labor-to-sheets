@@ -1336,7 +1336,7 @@ function setupLocationLookupSheet(ss) {
     'teams,BYROW(agents,LAMBDA(a,IFERROR(INDEX(CHOOSECOLS(rows,2),MATCH(a,who,0)),""))),' +
     'hrs,BYROW(agents,LAMBDA(a,IFERROR(SUM(FILTER(CHOOSECOLS(rows,3),who=a)),0))),' +
     'cst,BYROW(agents,LAMBDA(a,IFERROR(SUM(FILTER(CHOOSECOLS(rows,4),who=a)),0))),' +
-    'ent,BYROW(agents,LAMBDA(a,IFERROR(ROWS(FILTER(who,who=a)),0))),' +
+    'ent,BYROW(agents,LAMBDA(a,SUMPRODUCT(--(who=a)))),' +
     'IFERROR(SORT(HSTACK(agents,teams,hrs,cst,ent),3,FALSE),HSTACK(agents,teams,hrs,cst,ent))' +
     '),"No activity found for this location in the selected date range."))';
 
@@ -1365,7 +1365,7 @@ function setupLocationLookupSheet(ss) {
     'types,BYROW(keys,LAMBDA(k,IFERROR(INDEX(lbl,MATCH(k,lbl,0)),k))),' +
     'hrs,BYROW(keys,LAMBDA(k,IFERROR(SUM(FILTER(CHOOSECOLS(rows,2),lbl=k)),0))),' +
     'cst,BYROW(keys,LAMBDA(k,IFERROR(SUM(FILTER(CHOOSECOLS(rows,3),lbl=k)),0))),' +
-    'ent,BYROW(keys,LAMBDA(k,IFERROR(ROWS(FILTER(lbl,lbl=k)),0))),' +
+    'ent,BYROW(keys,LAMBDA(k,SUMPRODUCT(--(lbl=k)))),' +
     'IFERROR(SORT(HSTACK(types,hrs,cst,ent),2,FALSE),HSTACK(types,hrs,cst,ent))' +
     '),"No issue types found."))';
 
@@ -1384,7 +1384,7 @@ function setupLocationLookupSheet(ss) {
     'subjs,BYROW(ids,LAMBDA(id,IFERROR(INDEX(RawData!C:C,MATCH(id,RawData!A:A,0)),"?"))),' +
     'hrs,BYROW(ids,LAMBDA(id,IFERROR(SUM(FILTER(CHOOSECOLS(rows,3),tid=id)),0))),' +
     'cst,BYROW(ids,LAMBDA(id,IFERROR(SUM(FILTER(CHOOSECOLS(rows,4),tid=id)),0))),' +
-    'ent,BYROW(ids,LAMBDA(id,IFERROR(ROWS(FILTER(tid,tid=id)),0))),' +
+    'ent,BYROW(ids,LAMBDA(id,SUMPRODUCT(--(tid=id)))),' +
     'IFERROR(SORT(HSTACK(nums,subjs,hrs,cst,ent),3,FALSE),HSTACK(nums,subjs,hrs,cst,ent))' +
     '),"No tickets found."))';
 
